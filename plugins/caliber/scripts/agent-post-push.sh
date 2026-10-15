@@ -95,8 +95,10 @@ if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
     if not host or not re.fullmatch(r"[a-z0-9.:-]{1,253}", host):
         host = "CALIBER_URL names no plain host"
     line = "Caliber: project `" + slug + "` (" + source + ") \u00b7 " + host
+    # The context reaches the model; `systemMessage` shows the same line to the person.
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                             "additionalContext": line}}))
+                                             "additionalContext": line},
+                      "systemMessage": line}))
     sys.exit(0)
 
 try:
