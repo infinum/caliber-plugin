@@ -1,0 +1,11 @@
+{
+  "name": "caliber",
+  "version": "1.0.0",
+  "description": "Caliber's commands (/caliber:prd, /caliber:check, …), its MCP server with sign-in, and the session hook that checks a pull request after the agent's push.",
+  "author": {
+    "name": "Infinum"
+  },
+  "homepage": "https://caliber.infinum.com",
+  "repository": "https://github.com/infinum/caliber-plugin",
+  "license": "Apache-2.0"
+}

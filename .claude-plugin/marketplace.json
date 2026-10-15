@@ -1,0 +1,16 @@
+{
+  "name": "caliber",
+  "owner": {
+    "name": "Infinum"
+  },
+  "metadata": {
+    "description": "Caliber, Infinum's AI delivery platform, for Claude Code and Cowork."
+  },
+  "plugins": [
+    {
+      "name": "caliber",
+      "source": "./plugins/caliber",
+      "description": "Caliber's commands (/caliber:prd, /caliber:check, …), its MCP server with sign-in, and the session hook that checks a pull request after the agent's push."
+    }
+  ]
+}
