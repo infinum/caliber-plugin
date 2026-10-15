@@ -7,7 +7,8 @@ Code tab and Cowork:
 - **The Caliber MCP server**, signed in with your Caliber account. No token to create, copy or export.
 - **One command per Caliber ability**: `/caliber:prd`, `/caliber:brief`, `/caliber:tech-spec`,
   `/caliber:plan`, `/caliber:comments`, `/caliber:check`, `/caliber:fix`, `/caliber:open-pr`,
-  `/caliber:audit`, `/caliber:code-audit`, `/caliber:security-audit`, `/caliber:status` and `/caliber:setup`.
+  `/caliber:audit`, `/caliber:code-audit`, `/caliber:security-audit`, `/caliber:describe-specs`,
+  `/caliber:status` and `/caliber:setup`.
 - **The session hook**: after the agent's own `git push` (or a pull request it opens from the command line)
   in a repository set up for Caliber, Claude runs the Caliber check in the same session.
 
@@ -67,6 +68,7 @@ command lists the projects you can see and asks which one.
 | `/caliber:audit [audit-slug] [scope]` | Run one audit, or every audit the project runs |
 | `/caliber:code-audit [scope]` | Full code audit |
 | `/caliber:security-audit [scope]` | Full security audit |
+| `/caliber:describe-specs` | Propose one-line descriptions for specs that have none, and save the ones you agree to |
 | `/caliber:status` | The project's status and the next step |
 | `/caliber:setup` | Set up this repository for Caliber |
 

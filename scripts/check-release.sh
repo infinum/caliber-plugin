@@ -87,7 +87,7 @@ if len(found) != 1:
 PY
 
 # 5. The commands, each allowing its own tool, list_projects and Read.
-for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup; do
+for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup describe-specs; do
   file="$plugin/commands/$name.md"
   if [ ! -f "$file" ]; then
     fail "commands/$name.md is missing"
@@ -102,7 +102,7 @@ for name in prd brief tech-spec plan comments check fix open-pr audit code-audit
   done
 done
 count=$(find "$plugin/commands" -name '*.md' | wc -l | tr -d ' ')
-[ "$count" -eq 13 ] || fail "expected 13 commands, found $count"
+[ "$count" -eq 14 ] || fail "expected 14 commands, found $count"
 
 [ "$failed" -eq 0 ] || exit 1
 echo "check-release: ok (plugin $version, hooks version $hooks_version)"
