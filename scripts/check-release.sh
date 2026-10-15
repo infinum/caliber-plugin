@@ -4,8 +4,13 @@
 #   - .mcp.json's server has no headers (they are part of the sign-in's key) and its URL is .../mcp/plugin;
 #   - scripts/agent-post-push.sh is the server's file for its hooks version (scripts/server-hooks.sha256,
 #     and the file itself when CALIBER_SERVER_DIR names a checkout of infinum/caliber), and is executable;
-#   - every command exists and allows its own tool.
+#   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker;
+#   - every command exists and allows its own tool, list_projects and Read.
 # Run from anywhere:  scripts/check-release.sh
+#
+# CI has no checkout of the server, so it compares the hook script with the pinned sha256 only and cannot see
+# the server's file change under the same hooks version. Before tagging a release, run it by hand against a
+# current checkout of infinum/caliber as well:  CALIBER_SERVER_DIR=../caliber scripts/check-release.sh
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -69,14 +74,32 @@ else
   fi
 fi
 
-# 4. The commands, each allowing its own tool.
+# 4. The session hook, with the marker that keeps it quiet outside Caliber repositories.
+python3 - "$plugin/hooks/hooks.json" <<'PY' || failed=1
+import json, sys
+want = '"${CLAUDE_PLUGIN_ROOT}"/scripts/agent-post-push.sh claude plugin'
+entries = json.load(open(sys.argv[1]))["hooks"].get("PostToolUse", [])
+found = [h for e in entries if e.get("matcher") == "Bash" for h in e.get("hooks", [])
+         if h.get("type") == "command" and h.get("command") == want]
+if len(found) != 1:
+    print(f"check-release: hooks/hooks.json must run {want} once on PostToolUse Bash", file=sys.stderr)
+    sys.exit(1)
+PY
+
+# 5. The commands, each allowing its own tool, list_projects and Read.
 for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup; do
   file="$plugin/commands/$name.md"
   if [ ! -f "$file" ]; then
     fail "commands/$name.md is missing"
-  elif ! grep -Eq "^allowed-tools:.*mcp__plugin_caliber_caliber__$name(,|\$| )" "$file"; then
-    fail "commands/$name.md does not allow mcp__plugin_caliber_caliber__$name"
+    continue
   fi
+  allowed=$(sed -n 's/^allowed-tools:[[:space:]]*//p' "$file" | tr ',' ' ')
+  for tool in "mcp__plugin_caliber_caliber__$name" mcp__plugin_caliber_caliber__list_projects Read; do
+    case " $(echo "$allowed" | tr -s ' ') " in
+      *" $tool "*) ;;
+      *) fail "commands/$name.md does not allow $tool" ;;
+    esac
+  done
 done
 count=$(find "$plugin/commands" -name '*.md' | wc -l | tr -d ' ')
 [ "$count" -eq 13 ] || fail "expected 13 commands, found $count"

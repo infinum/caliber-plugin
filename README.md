@@ -97,6 +97,10 @@ between releases, so installed copies keep their sign-in after `/plugin update`.
 `backend/app/services/caliber/hooks/agent-post-push.sh` in `infinum/caliber`. When the server's hooks version
 moves, copy the file and add its `<hooks version> <sha256>` line to `scripts/server-hooks.sha256`.
 
+CI has no checkout of the server, so it compares the copy with the pinned sha256 only: it cannot see the
+server's script change under the same hooks version. Before every release, run `check-release.sh` by hand with
+`CALIBER_SERVER_DIR` pointing at a current checkout of `infinum/caliber`.
+
 ```
 scripts/check-release.sh                                   # what CI runs
 CALIBER_SERVER_DIR=../caliber scripts/check-release.sh     # also compares with a checkout of the server
