@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/agent-post-push.sh claude plugin session",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

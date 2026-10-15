@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 3
+# Caliber check on push: the agent session hook. caliber-hooks-version: 4
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -12,61 +12,93 @@
 # repository as  agent-post-push.sh claude plugin : with that marker it does nothing in
 # a repository that has no Caliber block (CLAUDE.md, AGENTS.md) and no .caliber/, or
 # whose .claude/settings.json runs the repository's own copy (one message, not two).
+# At the start of a session it runs  agent-post-push.sh claude plugin session : one line
+# naming the project, where it came from and the Caliber instance (the host of
+# CALIBER_URL, else app.caliberhq.io); it asks nobody anything.
+#
+# The project is this clone's own `git config --local caliber.project <slug>`, else the
+# one the Caliber block names.
 #
 #   git config --local caliber.checkInSession false    turn it off for this clone
 
 agent=${1:-claude}
+session=""
+if [ -n "${3:-}" ]; then
+  [ "$#" -eq 3 ] && [ "$1" = "claude" ] && [ "$2" = "plugin" ] && [ "$3" = "session" ] || exit 0
+  session=1
+fi
 if [ "${2:-}" = "plugin" ]; then
   top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
   if [ ! -d "$top/.caliber" ] && ! grep -qsF '<!-- caliber:start' "$top/CLAUDE.md" "$top/AGENTS.md"; then
     exit 0
   fi
-  ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
-fi
-input=$(cat)
-
-# Nearly every command ends here: one pass of grep, whatever the length of the input.
-printf '%s' "$input" | grep -q -e push -e 'pr create' -e 'mr create' -e pullrequests || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
-top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ "$(git config --get caliber.checkInSession 2>/dev/null)" != "false" ] || exit 0
-
-branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
-# The background check of this branch is running (the git hook started it for this
-# very push): one check per push. Whether the push was of this branch at all, the
-# script below decides from the command.
-running=""
-if [ -n "$branch" ]; then
-  common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
-  name=$(printf '%s' "$branch" | tr -c 'A-Za-z0-9._-' '_')
-  if [ "$name" != "$branch" ]; then
-    name="$name-$(printf '%s' "$branch" | git hash-object --stdin | cut -c1-8)"
-  fi
-  lock="$common/caliber/check-$name.pid"
-  if [ -n "$common" ] && [ -f "$lock" ]; then
-    read -r pid _ <"$lock" 2>/dev/null || pid=""
-    case "$pid" in '' | *[!0-9]*) pid="" ;; esac
-    # Alive, and still the runner (a pid is reused after a crash or a restart).
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      if [ -r "/proc/$pid/cmdline" ]; then
-        tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'check-on-push\.sh' && running=1
-      else
-        ps -o command= -p "$pid" 2>/dev/null | grep -q 'check-on-push\.sh' && running=1
-      fi
-    fi
-  fi
+  [ -n "$session" ] || ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
 fi
 
-# The agent sent JSON on stdin; the script below reads it there (it has no single
+# What the agent is handed, written by the Python below: the session's line, or after a
+# shell command the check to run. It reads the agent's JSON on stdin (it has no single
 # quote in it: it is one shell word).
 # shellcheck disable=SC2016
-printf '%s' "$input" | CALIBER_HOOK_BRANCH=$branch CALIBER_HOOK_RUNNING=$running CALIBER_HOOK_ROOT=$top python3 -c '
+program='
 import json
 import os
 import re
 import sys
+from urllib.parse import urlsplit
 
 agent = sys.argv[1]
+ROOT = os.environ.get("CALIBER_HOOK_ROOT") or "."
+# A project slug as Caliber makes one; anything else is not repeated.
+SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?")
+
+
+def block_slug():
+    """The project the Caliber block of this repository names, or None."""
+    for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md"):
+        try:
+            with open(os.path.join(ROOT, name), encoding="utf-8", errors="replace") as fh:
+                text = fh.read(1000000)
+        except OSError:
+            continue
+        start = text.find("<!-- caliber:start")
+        if start < 0:
+            continue
+        end = text.find("<!-- caliber:end -->", start)
+        block = text[start:end if end >= 0 else len(text)]
+        found = re.search(r"get_project\(project=\x22([^\x22]*)\x22\)", block) \
+            or re.search(r"Caliber project `([^`]*)`", block)
+        return found.group(1) if found and SLUG.fullmatch(found.group(1)) else None
+    return None
+
+
+def clone_slug():
+    """This clone\x27s own `caliber.project`, when it is a slug."""
+    value = os.environ.get("CALIBER_HOOK_PROJECT") or ""
+    return value if SLUG.fullmatch(value) else None
+
+
+if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
+    override, named = clone_slug(), block_slug()
+    slug = override or named
+    if not slug:
+        sys.exit(0)
+    if not override:
+        source = "the Caliber block"
+    elif named and named != override:
+        source = "the block names `" + named + "`; this clone\x27s caliber.project overrides it"
+    else:
+        source = "this clone\x27s caliber.project"
+    try:
+        host = urlsplit(os.environ.get("CALIBER_URL") or "https://app.caliberhq.io").hostname
+    except ValueError:
+        host = None
+    if not host or not re.fullmatch(r"[a-z0-9.:-]{1,253}", host):
+        host = "CALIBER_URL names no plain host"
+    line = "Caliber: project `" + slug + "` (" + source + ") \u00b7 " + host
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                             "additionalContext": line}}))
+    sys.exit(0)
+
 try:
     data = json.load(sys.stdin)
 except ValueError:
@@ -351,28 +383,10 @@ if re.search(r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote re
 branch = "" if elsewhere or unnamed else elsewhere_branch or current
 if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/@+#=,-]{0,254}$", branch) or ".." in branch:
     branch = ""
-# The project the Caliber block of this repository names: a sign-in that sees several
-# projects needs it on every call. (Not for a command run in another directory.)
-slug = None
-for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md"):
-    if elsewhere:
-        break
-    try:
-        with open(os.path.join(os.environ.get("CALIBER_HOOK_ROOT") or ".", name),
-                  encoding="utf-8", errors="replace") as fh:
-            text = fh.read(1000000)
-    except OSError:
-        continue
-    start = text.find("<!-- caliber:start")
-    if start < 0:
-        continue
-    end = text.find("<!-- caliber:end -->", start)
-    block = text[start:end if end >= 0 else len(text)]
-    found = re.search(r"get_project\(project=\x22([^\x22]*)\x22\)", block) \
-        or re.search(r"Caliber project `([^`]*)`", block)
-    if found and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", found.group(1)):
-        slug = found.group(1)
-    break
+# The project: this clone\x27s `caliber.project`, else the one the Caliber block of this
+# repository names; a sign-in that sees several projects needs it on every call. (Not for
+# a command run in another directory: that may be another repository.)
+slug = None if elsewhere else clone_slug() or block_slug()
 if slug:
     project = ", project=\x22" + slug + "\x22"
     named = " and `project=\x22" + slug + "\x22`"
@@ -409,5 +423,53 @@ elif agent == "copilot":
 else:
     event = "AfterTool" if agent == "gemini" else "PostToolUse"
     out = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": message}}
-print(json.dumps(out))
-' "$agent"
+print(json.dumps(out))'
+
+# The session's line: no stdin to read, no call to make.
+if [ -n "$session" ]; then
+  command -v python3 >/dev/null 2>&1 || exit 0
+  project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
+  CALIBER_HOOK_SESSION=1 CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
+    python3 -c "$program" "$agent" </dev/null
+  exit 0
+fi
+
+input=$(cat)
+
+# Nearly every command ends here: one pass of grep, whatever the length of the input.
+printf '%s' "$input" | grep -q -e push -e 'pr create' -e 'mr create' -e pullrequests || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ "$(git config --get caliber.checkInSession 2>/dev/null)" != "false" ] || exit 0
+project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
+
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
+# The background check of this branch is running (the git hook started it for this
+# very push): one check per push. Whether the push was of this branch at all, the
+# script below decides from the command.
+running=""
+if [ -n "$branch" ]; then
+  common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
+  name=$(printf '%s' "$branch" | tr -c 'A-Za-z0-9._-' '_')
+  if [ "$name" != "$branch" ]; then
+    name="$name-$(printf '%s' "$branch" | git hash-object --stdin | cut -c1-8)"
+  fi
+  lock="$common/caliber/check-$name.pid"
+  if [ -n "$common" ] && [ -f "$lock" ]; then
+    read -r pid _ <"$lock" 2>/dev/null || pid=""
+    case "$pid" in '' | *[!0-9]*) pid="" ;; esac
+    # Alive, and still the runner (a pid is reused after a crash or a restart).
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      if [ -r "/proc/$pid/cmdline" ]; then
+        tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'check-on-push\.sh' && running=1
+      else
+        ps -o command= -p "$pid" 2>/dev/null | grep -q 'check-on-push\.sh' && running=1
+      fi
+    fi
+  fi
+fi
+
+# The agent sent JSON on stdin; the program above reads it there.
+printf '%s' "$input" | CALIBER_HOOK_SESSION='' CALIBER_HOOK_BRANCH=$branch \
+  CALIBER_HOOK_RUNNING=$running CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
+  python3 -c "$program" "$agent"

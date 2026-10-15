@@ -4,8 +4,10 @@
 #   - .mcp.json's server has no headers (they are part of the sign-in's key) and its URL is .../mcp/plugin;
 #   - scripts/agent-post-push.sh is the server's file for its hooks version (scripts/server-hooks.sha256,
 #     and the file itself when CALIBER_SERVER_DIR names a checkout of infinum/caliber), and is executable;
-#   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker;
-#   - every command exists and allows its own tool, list_projects and Read.
+#   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker after each Bash command, and
+#     with `claude plugin session` at the start of a session;
+#   - every command exists and allows its own tool, projects and Read; a command that resolves the project
+#     also allows reading this clone's caliber.project, and /caliber:project allows setting and unsetting it.
 # Run from anywhere:  scripts/check-release.sh
 #
 # CI has no checkout of the server, so it compares the hook script with the pinned sha256 only and cannot see
@@ -74,35 +76,64 @@ else
   fi
 fi
 
-# 4. The session hook, with the marker that keeps it quiet outside Caliber repositories.
+# 4. The session hooks, with the marker that keeps them quiet outside Caliber repositories: after each Bash
+#    command, and the session's line at its start (every SessionStart: startup, resume, clear, compact).
 python3 - "$plugin/hooks/hooks.json" <<'PY' || failed=1
 import json, sys
-want = '"${CLAUDE_PLUGIN_ROOT}"/scripts/agent-post-push.sh claude plugin'
-entries = json.load(open(sys.argv[1]))["hooks"].get("PostToolUse", [])
-found = [h for e in entries if e.get("matcher") == "Bash" for h in e.get("hooks", [])
-         if h.get("type") == "command" and h.get("command") == want]
-if len(found) != 1:
-    print(f"check-release: hooks/hooks.json must run {want} once on PostToolUse Bash", file=sys.stderr)
-    sys.exit(1)
+script = '"${CLAUDE_PLUGIN_ROOT}"/scripts/agent-post-push.sh'
+hooks = json.load(open(sys.argv[1]))["hooks"]
+bad = []
+for event, matcher, args in (("PostToolUse", "Bash", "claude plugin"),
+                             ("SessionStart", None, "claude plugin session")):
+    want = f"{script} {args}"
+    found = [h for e in hooks.get(event, []) if e.get("matcher") == matcher
+             for h in e.get("hooks", []) if h.get("type") == "command" and h.get("command") == want]
+    runs = [h for e in hooks.get(event, []) for h in e.get("hooks", [])
+            if script in str(h.get("command", ""))]
+    if len(found) != 1 or len(runs) != 1:
+        on = f"{event} {matcher}" if matcher else f"{event} (no matcher)"
+        bad.append(f"hooks/hooks.json must run {want} once on {on}, and the script nothing else there")
+for b in bad:
+    print(f"check-release: {b}", file=sys.stderr)
+sys.exit(1 if bad else 0)
 PY
 
-# 5. The commands, each allowing its own tool, list_projects and Read.
-for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup describe-specs; do
+# 5. The commands, each allowing its own tool (/caliber:project has none of its own), projects and Read, and
+#    never list_projects. Every other command resolves the project, so it may read this clone's
+#    caliber.project; /caliber:project may set and unset it. An allowed tool is one entry between commas.
+get='Bash(git config --local --get caliber.project)'
+set_project='Bash(git config --local caliber.project:*)'
+unset_project='Bash(git config --local --unset caliber.project)'
+for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup \
+    describe-specs projects project; do
   file="$plugin/commands/$name.md"
   if [ ! -f "$file" ]; then
     fail "commands/$name.md is missing"
     continue
   fi
-  allowed=$(sed -n 's/^allowed-tools:[[:space:]]*//p' "$file" | tr ',' ' ')
-  for tool in "mcp__plugin_caliber_caliber__$name" mcp__plugin_caliber_caliber__list_projects Read; do
-    case " $(echo "$allowed" | tr -s ' ') " in
-      *" $tool "*) ;;
+  allowed=$(sed -n 's/^allowed-tools:[[:space:]]*//p' "$file" | sed 's/,[[:space:]]*/,/g')
+  case $name in
+    project) wanted="mcp__plugin_caliber_caliber__projects,$set_project,$unset_project,Read" ;;
+    projects) wanted="mcp__plugin_caliber_caliber__projects,$get,Read" ;;
+    *) wanted="mcp__plugin_caliber_caliber__$name,mcp__plugin_caliber_caliber__projects,$get,Read" ;;
+  esac
+  set -f # the entries hold * and spaces: split on commas only, expand nothing
+  ifs=$IFS
+  IFS=,
+  for tool in $wanted; do
+    case ",$allowed," in
+      *",$tool,"*) ;;
       *) fail "commands/$name.md does not allow $tool" ;;
     esac
   done
+  IFS=$ifs
+  set +f
+  case ",$allowed," in
+    *list_projects*) fail "commands/$name.md still names list_projects" ;;
+  esac
 done
 count=$(find "$plugin/commands" -name '*.md' | wc -l | tr -d ' ')
-[ "$count" -eq 14 ] || fail "expected 14 commands, found $count"
+[ "$count" -eq 16 ] || fail "expected 16 commands, found $count"
 
 [ "$failed" -eq 0 ] || exit 1
 echo "check-release: ok (plugin $version, hooks version $hooks_version)"
