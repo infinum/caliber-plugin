@@ -28,7 +28,7 @@ input=$(cat)
 # Nearly every command ends here: one pass of grep, whatever the length of the input.
 printf '%s' "$input" | grep -q -e push -e 'pr create' -e 'mr create' -e pullrequests || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ "$(git config --get caliber.checkInSession 2>/dev/null)" != "false" ] || exit 0
 
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
@@ -60,7 +60,7 @@ fi
 # The agent sent JSON on stdin; the script below reads it there (it has no single
 # quote in it: it is one shell word).
 # shellcheck disable=SC2016
-printf '%s' "$input" | CALIBER_HOOK_BRANCH=$branch CALIBER_HOOK_RUNNING=$running python3 -c '
+printf '%s' "$input" | CALIBER_HOOK_BRANCH=$branch CALIBER_HOOK_RUNNING=$running CALIBER_HOOK_ROOT=$top python3 -c '
 import json
 import os
 import re
@@ -351,6 +351,37 @@ if re.search(r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote re
 branch = "" if elsewhere or unnamed else elsewhere_branch or current
 if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/@+#=,-]{0,254}$", branch) or ".." in branch:
     branch = ""
+# The project the Caliber block of this repository names: a sign-in that sees several
+# projects needs it on every call. (Not for a command run in another directory.)
+slug = None
+for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md"):
+    if elsewhere:
+        break
+    try:
+        with open(os.path.join(os.environ.get("CALIBER_HOOK_ROOT") or ".", name),
+                  encoding="utf-8", errors="replace") as fh:
+            text = fh.read(1000000)
+    except OSError:
+        continue
+    start = text.find("<!-- caliber:start")
+    if start < 0:
+        continue
+    end = text.find("<!-- caliber:end -->", start)
+    block = text[start:end if end >= 0 else len(text)]
+    found = re.search(r"get_project\(project=\x22([^\x22]*)\x22\)", block) \
+        or re.search(r"Caliber project `([^`]*)`", block)
+    if found and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", found.group(1)):
+        slug = found.group(1)
+    break
+if slug:
+    project = ", project=\x22" + slug + "\x22"
+    named = " and `project=\x22" + slug + "\x22`"
+    hint = ""
+else:
+    project = named = ""
+    hint = ("Pass `project` = the slug the repository\x27s Caliber block names "
+            "(`get_project(project=\x22<slug>\x22)`), when it names one, to both calls.\n")
+
 what = ("opened a pull request" if opened and not pushed else "pushed") + (
     " for `" + branch + "`" if opened and not pushed and branch
     else " `" + branch + "`" if branch else " (in the repository and on the branch the command used)")
@@ -358,13 +389,15 @@ message = (
     "Caliber (check on push): this session just " + what + ". If this session has the "
     "Caliber MCP tools, check it now, here, without asking first:\n"
     "1. In the repository the command pushed from: `get_check_status(head_sha=<git "
-    "rev-parse " + (branch if branch and branch != current else "HEAD") + ">)` and read "
+    "rev-parse " + (branch if branch and branch != current else "HEAD") + ">" + project
+    + ")` and read "
     "`check_timing`. "
     "`manual`: this project runs no automatic checks, do nothing.\n"
     "2. `after_pr` and the branch has no pull request yet: do nothing.\n"
-    "3. Otherwise call the Caliber `check` tool with `push=no` and follow what it returns "
+    "3. Otherwise call the Caliber `check` tool with `push=no`" + named + " and follow "
+    "what it returns "
     "(the same as the `/caliber:check` prompt); when it finds nothing with a gap, say so "
-    "in one line.\n"
+    "in one line.\n" + hint +
     "Without the Caliber tools, ignore this. To turn it off for this clone: "
     "`git config --local caliber.checkInSession false`."
 )

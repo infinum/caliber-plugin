@@ -1,4 +1,5 @@
 # The server's agent-post-push.sh per hooks version: <caliber-hooks-version> <sha256>.
 # The sha256 is of backend/app/services/caliber/hooks/agent-post-push.sh in infinum/caliber,
-# taken from the server when its HOOKS_VERSION moves; add a line, never change one.
-3 68706de03a1c553b49339bf9aad253aec6015047187f6eb3ce2eea8aa2c9afba
+# taken from the server when its HOOKS_VERSION moves. A line is fixed once its hooks version is
+# released; until then it follows the server's file.
+3 13061d1c7db65ec2080982be1179a68702876747d46a0a728892e607f2c968e1

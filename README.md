@@ -94,8 +94,9 @@ A release is one commit that bumps `version` in `plugins/caliber/.claude-plugin/
 between releases, so installed copies keep their sign-in after `/plugin update`.
 
 `plugins/caliber/scripts/agent-post-push.sh` is a byte-identical copy of the server's
-`backend/app/services/caliber/hooks/agent-post-push.sh` in `infinum/caliber`. When the server's hooks version
-moves, copy the file and add its `<hooks version> <sha256>` line to `scripts/server-hooks.sha256`.
+`backend/app/services/caliber/hooks/agent-post-push.sh` in `infinum/caliber`. When the server's script
+changes, copy the file and record its `<hooks version> <sha256>` in `scripts/server-hooks.sha256`: a new line
+for a new hooks version; a line is fixed once its hooks version is released.
 
 CI has no checkout of the server, so it compares the copy with the pinned sha256 only: it cannot see the
 server's script change under the same hooks version. Before every release, run `check-release.sh` by hand with
