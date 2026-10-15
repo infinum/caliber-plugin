@@ -10,7 +10,7 @@
     {
       "name": "caliber",
       "source": "./plugins/caliber",
-      "description": "Caliber's commands (/caliber:prd, /caliber:check, …), its MCP server with sign-in, and the session hook that checks a pull request after the agent's push."
+      "description": "Caliber's commands (/caliber:prd, /caliber:check, …), its MCP server with sign-in, a line at the start of each session naming the project, and the session hook that checks a pull request after the agent's push."
     }
   ]
 }

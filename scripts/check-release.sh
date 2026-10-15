@@ -6,8 +6,8 @@
 #     and the file itself when CALIBER_SERVER_DIR names a checkout of infinum/caliber), and is executable;
 #   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker after each Bash command, and
 #     with `claude plugin session` at the start of a session;
-#   - every command exists and allows its own tool, projects and Read; a command that resolves the project
-#     also allows reading this clone's caliber.project, and /caliber:project allows setting and unsetting it.
+#   - every command exists and allows exactly its own tool, projects and Read, plus reading this clone's
+#     caliber.project (a command that resolves the project) or setting and unsetting it (/caliber:project).
 # Run from anywhere:  scripts/check-release.sh
 #
 # CI has no checkout of the server, so it compares the hook script with the pinned sha256 only and cannot see
@@ -98,12 +98,23 @@ for b in bad:
 sys.exit(1 if bad else 0)
 PY
 
-# 5. The commands, each allowing its own tool (/caliber:project has none of its own), projects and Read, and
-#    never list_projects. Every other command resolves the project, so it may read this clone's
-#    caliber.project; /caliber:project may set and unset it. An allowed tool is one entry between commas.
+# 5. The commands, each allowing exactly what it needs: its own tool (/caliber:project has none of its own),
+#    projects and Read, and nothing else. Every other command resolves the project, so it reads this clone's
+#    caliber.project; /caliber:project sets and unsets it. An allowed tool is one entry between commas.
 get='Bash(git config --local --get caliber.project)'
 set_project='Bash(git config --local caliber.project:*)'
 unset_project='Bash(git config --local --unset caliber.project)'
+nl='
+'
+# The lines of $1 that are not lines of $2, each after a space.
+absent() {
+  printf '%s\n' "$1" | while IFS= read -r line; do
+    case "$nl$2$nl" in
+      *"$nl$line$nl"*) ;;
+      *) printf ' %s' "$line" ;;
+    esac
+  done
+}
 for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup \
     describe-specs projects project; do
   file="$plugin/commands/$name.md"
@@ -111,26 +122,20 @@ for name in prd brief tech-spec plan comments check fix open-pr audit code-audit
     fail "commands/$name.md is missing"
     continue
   fi
-  allowed=$(sed -n 's/^allowed-tools:[[:space:]]*//p' "$file" | sed 's/,[[:space:]]*/,/g')
   case $name in
     project) wanted="mcp__plugin_caliber_caliber__projects,$set_project,$unset_project,Read" ;;
     projects) wanted="mcp__plugin_caliber_caliber__projects,$get,Read" ;;
     *) wanted="mcp__plugin_caliber_caliber__$name,mcp__plugin_caliber_caliber__projects,$get,Read" ;;
   esac
-  set -f # the entries hold * and spaces: split on commas only, expand nothing
-  ifs=$IFS
-  IFS=,
-  for tool in $wanted; do
-    case ",$allowed," in
-      *",$tool,"*) ;;
-      *) fail "commands/$name.md does not allow $tool" ;;
-    esac
-  done
-  IFS=$ifs
-  set +f
-  case ",$allowed," in
-    *list_projects*) fail "commands/$name.md still names list_projects" ;;
-  esac
+  have=$(sed -n 's/^allowed-tools:[[:space:]]*//p' "$file" | sed 's/[[:space:]]*,[[:space:]]*/,/g; s/[[:space:]]*$//' \
+    | tr ',' '\n' | sort)
+  want=$(printf '%s\n' "$wanted" | tr ',' '\n' | sort)
+  [ "$have" = "$want" ] && continue
+  missing=$(absent "$want" "$have")
+  extra=$(absent "$have" "$want")
+  [ -z "$missing" ] || fail "commands/$name.md does not allow:$missing"
+  [ -z "$extra" ] || fail "commands/$name.md allows more than it needs:$extra"
+  [ -n "$missing$extra" ] || fail "commands/$name.md lists an allowed tool twice"
 done
 count=$(find "$plugin/commands" -name '*.md' | wc -l | tr -d ' ')
 [ "$count" -eq 16 ] || fail "expected 16 commands, found $count"
