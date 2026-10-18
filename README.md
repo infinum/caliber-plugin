@@ -11,8 +11,10 @@ Code tab and Cowork:
   `/caliber:status` and `/caliber:setup`, plus `/caliber:projects` and `/caliber:project` to see and choose
   this clone's project.
 - **The session hooks**: at the start of a session in a repository set up for Caliber, one line names the
-  project, where it comes from and the Caliber instance; after the agent's own `git push` (or a pull request
-  it opens from the command line), Claude runs the Caliber check in the same session.
+  project, where it comes from and the Caliber instance; in a clone of a project's repository that has no
+  Caliber block, the line instead has Claude offer the setup once (Yes, recommended; Not now; Don't ask again); after the
+  agent's own `git push` (or a pull request it opens from the command line), Claude runs the Caliber check in
+  the same session.
 
 The plugin does nothing without a Caliber account. It holds configuration and short command files only: no
 secret, no token, no prompt text. Each command calls the Caliber tool of the same name and follows the
@@ -68,6 +70,12 @@ A session in a repository set up for Caliber starts with one line such as
 (this clone's `caliber.project`, the block, or a warning when the two name different projects) and the
 instance the plugin talks to. `/caliber:status` starts with the same.
 
+A clone that has no Caliber block and no `caliber.project` is offered the setup instead, the first time the
+session needs a Caliber project and one of your projects lists the clone's origin: **Yes (Recommended)** runs
+`/caliber:setup` for that project, **not now** leaves it for the next session, and **don't ask again** is
+remembered for the clone (`git config --local caliber.askSetup false`; `--unset` turns the offer back on).
+Nothing is written without your answer.
+
 | Command | What it does |
 |---|---|
 | `/caliber:prd <feature>` | Write a PRD and save it for approval |
@@ -87,7 +95,8 @@ instance the plugin talks to. `/caliber:status` starts with the same.
 | `/caliber:projects` | The projects you can use, this clone's marked, and the instance |
 | `/caliber:project [slug\|--unset]` | Show, set or clear this clone's project (`caliber.project`) |
 
-The session hooks run only in a repository with the Caliber block or a `.caliber/` directory. The check after
+The check after a push runs only in a repository with the Caliber block or a `.caliber/` directory; the
+session's line names the project there and offers the setup elsewhere (above). The check after
 a push stays quiet when the repository's own `.claude/settings.json` already runs Caliber's hook; turn it off
 for one clone with `git config --local caliber.checkInSession false`.
 

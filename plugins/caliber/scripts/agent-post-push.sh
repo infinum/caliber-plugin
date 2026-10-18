@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 4
+# Caliber check on push: the agent session hook. caliber-hooks-version: 5
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -14,7 +14,13 @@
 # whose .claude/settings.json runs the repository's own copy (one message, not two).
 # At the start of a session it runs  agent-post-push.sh claude plugin session : one line
 # naming the project, where it came from and the Caliber instance (the host of
-# CALIBER_URL, else app.caliberhq.io); it asks nobody anything.
+# CALIBER_URL, else app.caliberhq.io); it asks nobody anything. Where the repository has
+# no Caliber block and no caliber.project, the line instead tells the agent to offer the
+# setup once (Yes, recommended; Not now; Don't ask again: git config --local caliber.askSetup false)
+# when a project of the sign-in lists the clone's origin, which the line gives without
+# any userinfo; with caliber.askSetup false (or no, off, 0) it says nothing, and on a
+# resume or a compaction it says nothing again. Every python3 here runs with -I, so a
+# module planted at the repository's root never runs.
 #
 # The project is this clone's own `git config --local caliber.project <slug>`, else the
 # one the Caliber block names.
@@ -29,8 +35,13 @@ if [ -n "${3:-}" ]; then
 fi
 if [ "${2:-}" = "plugin" ]; then
   top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+  # A repository that is Caliber's: the check after a push acts only there, and the
+  # session's line names its project only there; elsewhere the session's line may offer
+  # the setup (the Python below decides).
+  caliber_repo=1
   if [ ! -d "$top/.caliber" ] && ! grep -qsF '<!-- caliber:start' "$top/CLAUDE.md" "$top/AGENTS.md"; then
-    exit 0
+    [ -n "$session" ] || exit 0
+    caliber_repo=""
   fi
   [ -n "$session" ] || ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
 fi
@@ -52,9 +63,22 @@ ROOT = os.environ.get("CALIBER_HOOK_ROOT") or "."
 SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?")
 
 
-def block_slug():
-    """The project the Caliber block of this repository names, or None."""
-    for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md"):
+def instruction_files():
+    """The files an agent reads, as the setup prompt writes them: the fixed names and
+    every Cursor rule."""
+    names = ["CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md",
+             ".windsurfrules"]
+    try:
+        rules = sorted(os.listdir(os.path.join(ROOT, ".cursor", "rules")))
+    except OSError:
+        rules = []
+    return names + [os.path.join(".cursor", "rules", r) for r in rules if r.endswith(".mdc")]
+
+
+def block():
+    """(whether an instruction file of this repository has a Caliber block, the project
+    it names or None)."""
+    for name in instruction_files():
         try:
             with open(os.path.join(ROOT, name), encoding="utf-8", errors="replace") as fh:
                 text = fh.read(1000000)
@@ -64,11 +88,32 @@ def block_slug():
         if start < 0:
             continue
         end = text.find("<!-- caliber:end -->", start)
-        block = text[start:end if end >= 0 else len(text)]
-        found = re.search(r"get_project\(project=\x22([^\x22]*)\x22\)", block) \
-            or re.search(r"Caliber project `([^`]*)`", block)
-        return found.group(1) if found and SLUG.fullmatch(found.group(1)) else None
-    return None
+        found_in = text[start:end if end >= 0 else len(text)]
+        found = re.search(r"get_project\(project=\x22([^\x22]*)\x22\)", found_in) \
+            or re.search(r"Caliber project `([^`]*)`", found_in)
+        return True, (found.group(1) if found and SLUG.fullmatch(found.group(1)) else None)
+    return False, None
+
+
+def block_slug():
+    """The project the Caliber block of this repository names, or None."""
+    return block()[1]
+
+
+def origin_for_context():
+    """The clone\x27s origin as the model may read it: no userinfo (a token in an
+    https URL, a user other than git in an scp-like one), only plain characters, at
+    most 200 of them; else `unknown`."""
+    raw = (os.environ.get("CALIBER_HOOK_ORIGIN") or "").strip()
+    if "://" in raw:
+        scheme, _, rest = raw.partition("://")
+        netloc, slash, path = rest.partition("/")
+        raw = scheme + "://" + netloc.rsplit("@", 1)[-1] + slash + path
+    else:
+        scp = re.match(r"(?:(.*)@)?([^@:/]+):(.*)\Z", raw, re.DOTALL)
+        if scp:
+            raw = ("git@" if scp.group(1) == "git" else "") + scp.group(2) + ":" + scp.group(3)
+    return raw if re.fullmatch(r"[A-Za-z0-9._:@/+-]{1,200}", raw) else "unknown"
 
 
 def clone_slug():
@@ -78,10 +123,34 @@ def clone_slug():
 
 
 if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
-    override, named = clone_slug(), block_slug()
+    override = clone_slug()
+    has_block, named = block()
     slug = override or named
     if not slug:
+        # No project anywhere: offer the setup once, unless a block that names no project
+        # is there (an old one; the agent sees it), the clone said not to ask, or the
+        # session goes on (a resume or a compaction: the person answered already).
+        try:
+            source = (json.load(sys.stdin) or {}).get("source")
+        except (ValueError, OSError, AttributeError):
+            source = None
+        if has_block or (os.environ.get("CALIBER_HOOK_ASK") or "").strip().lower() == "false" \
+                or source not in (None, "startup", "clear"):
+            sys.exit(0)
+        offer = ("Caliber: this repository has no Caliber block and no `caliber.project` "
+                 "(origin: `" + origin_for_context() + "`). The first time this session "
+                 "needs a Caliber project, call `projects`: when one project lists this "
+                 "repository, ask the person once whether to set it up here, with the answers "
+                 "Yes (Recommended), Not now and Don\x27t ask again \u2014 yes: the "
+                 "`setup` tool with that project\x27s slug, in this session; not now: "
+                 "nothing; don\x27t ask again: `git config --local caliber.askSetup false`. "
+                 "When none lists it, say nothing.")
+        # Context for the model only: the person hears it as the agent\x27s question.
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                                 "additionalContext": offer}}))
         sys.exit(0)
+    if not os.environ.get("CALIBER_HOOK_CALIBER_REPO"):
+        sys.exit(0)  # the clone\x27s project alone, outside a Caliber repository: as before
     if not override:
         source = "the Caliber block"
     elif named and named != override:
@@ -431,8 +500,14 @@ print(json.dumps(out))'
 if [ -n "$session" ]; then
   command -v python3 >/dev/null 2>&1 || exit 0
   project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
+  origin=$(git -C "$top" remote get-url origin 2>/dev/null) || origin=""
+  # As git reads a boolean: false, no, off and 0 all say no (a value that is none: ask).
+  ask=$(git -C "$top" config --type=bool --get caliber.askSetup 2>/dev/null) || ask=""
+  # The SessionStart input (its `source`) comes on stdin; a terminal is not read.
+  if [ -t 0 ]; then exec </dev/null; fi
   CALIBER_HOOK_SESSION=1 CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
-    python3 -c "$program" "$agent" </dev/null
+    CALIBER_HOOK_CALIBER_REPO=$caliber_repo CALIBER_HOOK_ORIGIN=$origin CALIBER_HOOK_ASK=$ask \
+    python3 -I -c "$program" "$agent"
   exit 0
 fi
 
@@ -474,4 +549,4 @@ fi
 # The agent sent JSON on stdin; the program above reads it there.
 printf '%s' "$input" | CALIBER_HOOK_SESSION='' CALIBER_HOOK_BRANCH=$branch \
   CALIBER_HOOK_RUNNING=$running CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
-  python3 -c "$program" "$agent"
+  python3 -I -c "$program" "$agent"
