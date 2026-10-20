@@ -8,7 +8,7 @@ Code tab and Cowork:
 - **One command per Caliber ability**: `/caliber:prd`, `/caliber:brief`, `/caliber:tech-spec`,
   `/caliber:plan`, `/caliber:comments`, `/caliber:check`, `/caliber:fix`, `/caliber:open-pr`,
   `/caliber:audit`, `/caliber:code-audit`, `/caliber:security-audit`, `/caliber:describe-specs`,
-  `/caliber:status` and `/caliber:setup`, plus `/caliber:projects` and `/caliber:project` to see and choose
+  `/caliber:status`, `/caliber:setup` and `/caliber:setup-usage`, plus `/caliber:projects` and `/caliber:project` to see and choose
   this clone's project.
 - **The session hooks**: at the start of a session in a repository set up for Caliber, one line names the
   project, where it comes from and the Caliber instance; in a clone of a project's repository that has no
@@ -91,7 +91,8 @@ Nothing is written without your answer.
 | `/caliber:security-audit [scope]` | Full security audit |
 | `/caliber:describe-specs` | Propose one-line descriptions for specs that have none, and save the ones you agree to |
 | `/caliber:status` | The project's status and the next step |
-| `/caliber:setup` | Set up this repository for Caliber |
+| `/caliber:setup` | Set up this repository for Caliber, then your own usage (`/caliber:setup-usage`) |
+| `/caliber:setup-usage` | Set up your own usage: a client repository's commit sync (the last 30 days at once) and your agents' telemetry |
 | `/caliber:projects` | The projects you can use, this clone's marked, and the instance |
 | `/caliber:project [slug\|--unset]` | Show, set or clear this clone's project (`caliber.project`) |
 
