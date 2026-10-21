@@ -1,10 +1,10 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 5
+# Caliber check on push: the agent session hook. caliber-hooks-version: 9
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
-# with <agent> one of claude, codex, cursor, gemini, copilot (the format of what the
-# agent sends on stdin and reads on stdout). After a successful `git push`, or a pull
+# with <agent> one of claude, codex, cursor, copilot, or gemini for an earlier setup's
+# entry (the format of what the agent sends on stdin and reads on stdout). After a successful `git push`, or a pull
 # request opened from the command line, it tells the agent to run the Caliber check
 # in this session. Every other command, and a failed one: no output.
 #
@@ -24,6 +24,11 @@
 #
 # The project is this clone's own `git config --local caliber.project <slug>`, else the
 # one the Caliber block names.
+#
+# In a clone of a virtual repository (caliber.syncActivity true, with its sync token), the
+# start of a session also starts the activity sync in the background, at most once an
+# hour (<git common dir>/caliber/hooks/pre-push --sync --session: the copy the install put
+# in the git directory, never a file of the client's working tree), and offers no setup.
 #
 #   git config --local caliber.checkInSession false    turn it off for this clone
 
@@ -63,16 +68,52 @@ ROOT = os.environ.get("CALIBER_HOOK_ROOT") or "."
 SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?")
 
 
-def instruction_files():
-    """The files an agent reads, as the setup prompt writes them: the fixed names and
-    every Cursor rule."""
-    names = ["CLAUDE.md", "AGENTS.md", "GEMINI.md", ".github/copilot-instructions.md",
-             ".windsurfrules"]
+# The files an agent reads, as the setup prompt writes them (the support table,
+# backend/app/services/caliber/agents.py): the full block in these two,
+FULL_FILES = ["AGENTS.md", "CLAUDE.md"]
+# and a pointer to it in these: an exact path, the files of a directory that carry the
+# markers ("<dir>/*.md"), or ".clinerules?", the path as a file or its marked files as a
+# directory. A test keeps this list equal to agents.POINTER_FILES.
+POINTER_FILES = [
+    ".github/copilot-instructions.md", ".cursor/rules/*.mdc", ".cursorrules",
+    ".omp/AGENTS.md", ".devin/rules/*.md", ".junie/AGENTS.md", ".clinerules?",
+    ".cline/rules/*.md", ".agents/rules/*.md", ".windsurf/rules/*.md", ".windsurfrules",
+    ".kiro/steering/*.md", "QWEN.md", ".hermes.md", "HERMES.md", ".rules", "WARP.md",
+]
+
+
+def marked(path):
     try:
-        rules = sorted(os.listdir(os.path.join(ROOT, ".cursor", "rules")))
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return "<!-- caliber:start" in fh.read(1000000)
     except OSError:
-        rules = []
-    return names + [os.path.join(".cursor", "rules", r) for r in rules if r.endswith(".mdc")]
+        return False
+
+
+def expand(entry):
+    if entry.endswith("?"):
+        path = os.path.join(ROOT, entry[:-1])
+        if os.path.isfile(path):
+            return [entry[:-1]]
+        return expand(entry[:-1] + "/*.md") if os.path.isdir(path) else []
+    if "/*." in entry:
+        directory, pattern = entry.rsplit("/", 1)
+        try:
+            names = sorted(os.listdir(os.path.join(ROOT, directory)))
+        except OSError:
+            return []
+        found = []
+        for name in names:
+            path = os.path.join(ROOT, directory, name)
+            if name.endswith(pattern[1:]) and os.path.isfile(path) and marked(path):
+                found.append(directory + "/" + name)
+        return found
+    return [entry] if os.path.isfile(os.path.join(ROOT, entry)) else []
+
+
+def instruction_files():
+    """The full-block files, then every pointer file the repository has, sorted."""
+    return FULL_FILES + sorted({p for entry in POINTER_FILES for p in expand(entry)})
 
 
 def block():
@@ -135,7 +176,7 @@ if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
         except (ValueError, OSError, AttributeError):
             source = None
         if has_block or (os.environ.get("CALIBER_HOOK_ASK") or "").strip().lower() == "false" \
-                or source not in (None, "startup", "clear"):
+                or os.environ.get("CALIBER_HOOK_SYNC") or source not in (None, "startup", "clear"):
             sys.exit(0)
         offer = ("Caliber: this repository has no Caliber block and no `caliber.project` "
                  "(origin: `" + origin_for_context() + "`). The first time this session "
@@ -505,9 +546,27 @@ if [ -n "$session" ]; then
   ask=$(git -C "$top" config --type=bool --get caliber.askSetup 2>/dev/null) || ask=""
   # The SessionStart input (its `source`) comes on stdin; a terminal is not read.
   if [ -t 0 ]; then exec </dev/null; fi
+  # A clone set up for the activity sync: the sync starts now, detached (it ends at once
+  # when it last ran less than an hour ago), and the clone is set up, so no offer. It is
+  # the git directory's copy of the hook: a merge may have put the client's file at
+  # .caliber/hooks/pre-push of the working tree.
+  sync=""
+  if [ "$(git -C "$top" config --local --get caliber.syncActivity 2>/dev/null)" = true ]; then
+    common=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
+    if [ -n "$common" ] && [ -f "$common/caliber/sync-token" ] && [ -x "$common/caliber/hooks/pre-push" ]; then
+      sync=1
+      (cd "$top" && nohup python3 -I -c 'import os, sys
+try:
+    os.setsid()
+except OSError:
+    pass
+os.execv(sys.argv[1], sys.argv[1:])' "$common/caliber/hooks/pre-push" --sync --session \
+        </dev/null >/dev/null 2>&1 &)
+    fi
+  fi
   CALIBER_HOOK_SESSION=1 CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
     CALIBER_HOOK_CALIBER_REPO=$caliber_repo CALIBER_HOOK_ORIGIN=$origin CALIBER_HOOK_ASK=$ask \
-    python3 -I -c "$program" "$agent"
+    CALIBER_HOOK_SYNC=$sync python3 -I -c "$program" "$agent"
   exit 0
 fi
 
