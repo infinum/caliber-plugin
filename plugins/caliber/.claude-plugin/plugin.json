@@ -1,6 +1,6 @@
 {
   "name": "caliber",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Caliber's commands (/caliber:prd, /caliber:check, …), its MCP server with sign-in, a line at the start of each session naming the project (or offering the setup where the Caliber block is missing), and the session hook that checks a pull request after the agent's push.",
   "author": {
     "name": "Infinum"
