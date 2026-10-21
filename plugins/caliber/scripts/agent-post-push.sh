@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 9
+# Caliber check on push: the agent session hook. caliber-hooks-version: 10
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -551,7 +551,7 @@ if [ -n "$session" ]; then
   # the git directory's copy of the hook: a merge may have put the client's file at
   # .caliber/hooks/pre-push of the working tree.
   sync=""
-  if [ "$(git -C "$top" config --local --get caliber.syncActivity 2>/dev/null)" = true ]; then
+  if [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ]; then
     common=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
     if [ -n "$common" ] && [ -f "$common/caliber/sync-token" ] && [ -x "$common/caliber/hooks/pre-push" ]; then
       sync=1
@@ -576,7 +576,7 @@ input=$(cat)
 printf '%s' "$input" | grep -q -e push -e 'pr create' -e 'mr create' -e pullrequests || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ "$(git config --get caliber.checkInSession 2>/dev/null)" != "false" ] || exit 0
+[ "$(git config --type=bool --get caliber.checkInSession 2>/dev/null)" != "false" ] || exit 0
 project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
 
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
