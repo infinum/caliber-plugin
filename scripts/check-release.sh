@@ -1,9 +1,11 @@
 #!/bin/sh
 # Fails unless this commit is a consistent release of the plugin:
-#   - plugin.json's version equals the plugin_version that commands/status.md passes;
+#   - plugin.json's version equals the plugin_version that commands/status.md, setup.md and setup-usage.md
+#     pass, and the two setup commands name the plugin's sync script;
 #   - .mcp.json's server has no headers (they are part of the sign-in's key) and its URL is .../mcp/plugin;
-#   - scripts/agent-post-push.sh is the server's file for its hooks version (scripts/server-hooks.sha256,
-#     and the file itself when CALIBER_SERVER_DIR names a checkout of infinum/caliber), and is executable;
+#   - scripts/agent-post-push.sh and scripts/pre-push are the server's files for their hooks version
+#     (scripts/server-hooks.sha256, and the files themselves when CALIBER_SERVER_DIR names a checkout of
+#     infinum/caliber), of one hooks version, and executable;
 #   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker after each Bash command, and
 #     with `claude plugin session` at the start of a session;
 #   - every command exists and allows exactly its own tool, projects and Read, plus reading this clone's
@@ -29,12 +31,25 @@ sha256() {
 version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
   "$plugin/.claude-plugin/plugin.json")
 echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "plugin.json version '$version' is not x.y.z"
-# shellcheck disable=SC2016 # the backticks are literal: the command file quotes the argument name
-passed=$(grep -o '`plugin_version` = "[^"]*"' "$plugin/commands/status.md" | sed 's/.*= "\(.*\)"/\1/')
-[ "$(printf '%s\n' "$passed" | grep -c .)" -eq 1 ] \
-  || fail "commands/status.md must pass plugin_version exactly once (found: '$passed')"
-[ "$passed" = "$version" ] \
-  || fail "commands/status.md passes plugin_version '$passed', plugin.json says '$version'"
+# status.md passes it once; setup.md twice (to `setup`, and on to `setup-usage`); setup-usage.md once.
+for entry in status:1 setup:2 setup-usage:1; do
+  name=${entry%:*}
+  times=${entry#*:}
+  # shellcheck disable=SC2016 # the backticks are literal: the command file quotes the argument name
+  passed=$(grep -o '`plugin_version` = "[^"]*"' "$plugin/commands/$name.md" | sed 's/.*= "\(.*\)"/\1/')
+  [ "$(printf '%s\n' "$passed" | grep -c .)" -eq "$times" ] \
+    || fail "commands/$name.md must pass plugin_version $times time(s) (found: '$passed')"
+  for one in $passed; do
+    [ "$one" = "$version" ] \
+      || fail "commands/$name.md passes plugin_version '$one', plugin.json says '$version'"
+  done
+done
+# The session route of the commit sync runs the plugin's own copy of the server's pre-push.
+for name in setup setup-usage; do
+  # shellcheck disable=SC2016 # the plugin root is substituted by Claude Code, not here
+  grep -qF '`${CLAUDE_PLUGIN_ROOT}/scripts/pre-push`' "$plugin/commands/$name.md" \
+    || fail "commands/$name.md must name the sync script \`\${CLAUDE_PLUGIN_ROOT}/scripts/pre-push\`"
+done
 
 # 2. The MCP server: URL only, on /mcp/plugin.
 python3 - "$plugin/.mcp.json" <<'PY' || failed=1
@@ -53,28 +68,41 @@ for b in bad:
 sys.exit(1 if bad else 0)
 PY
 
-# 3. The hook script: the server's, byte for byte.
-hook="$plugin/scripts/agent-post-push.sh"
-[ -x "$hook" ] || fail "scripts/agent-post-push.sh is not executable"
-hooks_version=$(sed -n 's/.*caliber-hooks-version: \([0-9][0-9]*\).*/\1/p' "$hook" | head -n 1)
-if [ -z "$hooks_version" ]; then
-  fail "scripts/agent-post-push.sh has no caliber-hooks-version line"
-else
-  pinned=$(awk -v v="$hooks_version" '$1 == v { print $2 }' "$root/scripts/server-hooks.sha256")
+# 3. The hook scripts: the server's, byte for byte, of one hooks version. A pin line without a file name is
+#    agent-post-push.sh's.
+hooks_version=""
+for name in agent-post-push.sh pre-push; do
+  hook="$plugin/scripts/$name"
+  if [ ! -f "$hook" ]; then
+    fail "scripts/$name is missing"
+    continue
+  fi
+  [ -x "$hook" ] || fail "scripts/$name is not executable"
+  version_of=$(sed -n 's/.*caliber-hooks-version: \([0-9][0-9]*\).*/\1/p' "$hook" | head -n 1)
+  if [ -z "$version_of" ]; then
+    fail "scripts/$name has no caliber-hooks-version line"
+    continue
+  fi
+  [ -z "$hooks_version" ] || [ "$hooks_version" = "$version_of" ] \
+    || fail "scripts/$name is hooks version $version_of, agent-post-push.sh $hooks_version"
+  hooks_version=$version_of
+  pinned=$(awk -v v="$version_of" -v f="$name" \
+    '$1 == v && ($3 == f || ($3 == "" && f == "agent-post-push.sh")) { print $2 }' \
+    "$root/scripts/server-hooks.sha256")
   if [ -z "$pinned" ]; then
-    fail "scripts/server-hooks.sha256 has no line for hooks version $hooks_version"
+    fail "scripts/server-hooks.sha256 has no line for $name of hooks version $version_of"
   elif [ "$(sha256 "$hook")" != "$pinned" ]; then
-    fail "scripts/agent-post-push.sh differs from the server's file for hooks version $hooks_version"
+    fail "scripts/$name differs from the server's file for hooks version $version_of"
   fi
   if [ -n "${CALIBER_SERVER_DIR:-}" ]; then
-    server="$CALIBER_SERVER_DIR/backend/app/services/caliber/hooks/agent-post-push.sh"
-    if ! grep -q "caliber-hooks-version: $hooks_version\$" "$server" 2>/dev/null; then
-      fail "$server is not hooks version $hooks_version"
+    server="$CALIBER_SERVER_DIR/backend/app/services/caliber/hooks/$name"
+    if ! grep -q "caliber-hooks-version: $version_of\$" "$server" 2>/dev/null; then
+      fail "$server is not hooks version $version_of"
     elif ! cmp -s "$hook" "$server"; then
-      fail "scripts/agent-post-push.sh differs from $server"
+      fail "scripts/$name differs from $server"
     fi
   fi
-fi
+done
 
 # 4. The session hooks, with the marker that keeps them quiet outside Caliber repositories: after each Bash
 #    command, and the session's line at its start (every SessionStart: startup, resume, clear, compact).
