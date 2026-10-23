@@ -66,11 +66,12 @@ here=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 0
 # The endpoint --install records: the Caliber server of the repository's MCP configs, or,
 # with none, CALIBER_URL's or the plugin's default. `endpoint virtual` never reads the
 # MCP configs: a virtual repository's working tree is the client's, and must not choose
-# where the sync token goes. (Each Python script of this hook is the body of a function:
-# bash 3.2 misreads a here-document inside $(...).)
+# where the sync token goes. The clone's endpoint (`pinned`), when it has one, must be a
+# plain URL too: `bad-pin`, as the sync sends nothing to any other. (Each Python script of
+# this hook is the body of a function: bash 3.2 misreads a here-document inside $(...).)
 endpoint() {
   CALIBER_BASE=${CALIBER_URL:-https://app.caliberhq.io} CALIBER_CONFIGS=${1:-repository} \
-    python3 -I - <<'PY'
+    CALIBER_PINNED=${pinned:-} python3 -I - <<'PY'
 import json
 import os
 import re
@@ -90,6 +91,17 @@ def plain(url):
         and parts.username is None and parts.password is None
 
 
+def shown(url):
+    """Shown without a user and password, should it carry them. A value whose `@` the rule
+    misses (a password with a `/` in it) is not shown at all."""
+    bare = re.sub(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@", r"\1", url)
+    return "not shown: it holds an @" if "@" in bare else bare
+
+
+pinned = os.environ["CALIBER_PINNED"]
+if pinned and not plain(pinned):
+    print("bad-pin " + shown(pinned))
+    raise SystemExit(0)
 named = False
 # The project MCP files setup writes the URL into (the support table), and Gemini CLI's,
 # which a clone set up before it may still carry. None in a virtual repository.
@@ -115,10 +127,7 @@ if named:
     print("refused")
 else:
     url = os.environ["CALIBER_BASE"].rstrip("/") + "/mcp"
-    # Shown without a user and password, should it carry them.
-    print(("default " + url) if plain(url)
-          else "bad-env " + re.sub(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@", r"\1",
-                                   os.environ["CALIBER_BASE"]))
+    print(("default " + url) if plain(url) else "bad-env " + shown(os.environ["CALIBER_BASE"]))
 PY
 }
 
@@ -1372,23 +1381,31 @@ if [ "${1:-}" = "--install" ]; then
   # CALIBER_URL's endpoint, or the plugin's default. A virtual repository's MCP configs are
   # never read: the endpoint setup recorded (caliber.mcpUrl), else CALIBER_URL's or the
   # default.
+  # A clone that has its endpoint keeps it: your token goes there, so it changes only
+  # when you say so, not because the repository's config names another one now. CALIBER_URL
+  # is read only for a clone with none: one that is no plain URL stops only that install.
+  pinned=$(git config --local --get caliber.mcpUrl 2>/dev/null) || pinned=""
   if [ -n "$virtual" ]; then found=$(endpoint virtual); else found=$(endpoint); fi
   case "$found" in
-    "config "*) url=${found#config } ;;
-    "default "*) url=${found#default } ;;
-    "bad-env "*)
-      say "not installed: CALIBER_URL must be an https URL without credentials (${found#bad-env })"
+    "bad-pin "*)
+      say "not installed: this clone's caliber.mcpUrl must be an https URL without credentials (${found#bad-pin })"
+      say "Set it to your Caliber's MCP address with git config --local caliber.mcpUrl, or unset it."
       exit 1
+      ;;
+    "config "*) url=${found#config } ;;
+    "default "*) url=${pinned:-${found#default }} ;;
+    "bad-env "*)
+      if [ -z "$pinned" ]; then
+        say "not installed: CALIBER_URL must be an https URL without credentials (${found#bad-env })"
+        exit 1
+      fi
+      url=$pinned
       ;;
     *)
       say "not installed: no Caliber server (an https URL) in this repository's MCP configs; run /caliber:setup first"
       exit 1
       ;;
   esac
-  # A clone that has its endpoint keeps it: your token goes there, so it changes only
-  # when you say so, not because the repository's config names another one now.
-  pinned=$(git config --local --get caliber.mcpUrl 2>/dev/null) || pinned=""
-  case "$found" in "default "*) [ -z "$pinned" ] || url=$pinned ;; esac
   if [ -n "$pinned" ] && [ "$pinned" != "$url" ]; then
     say "not changed: this clone reports to $pinned, and the repository's MCP config now names $url."
     say "If the new one is right, set caliber.mcpUrl to it with git config --local."
