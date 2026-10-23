@@ -34,4 +34,4 @@ jobs:
         run: scripts/check-release.sh
 
       - name: Shellcheck
-        run: shellcheck scripts/check-release.sh plugins/caliber/scripts/agent-post-push.sh
+        run: shellcheck scripts/check-release.sh plugins/caliber/scripts/agent-post-push.sh plugins/caliber/scripts/pre-push

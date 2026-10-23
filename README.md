@@ -117,13 +117,15 @@ is not needed there.
 ## Releasing
 
 A release is one commit that bumps `version` in `plugins/caliber/.claude-plugin/plugin.json` and the
-`plugin_version` that `plugins/caliber/commands/status.md` passes, together. The server address never changes
-between releases, so installed copies keep their sign-in after `/plugin update`.
+`plugin_version` that `plugins/caliber/commands/status.md`, `setup.md` and `setup-usage.md` pass, together. The
+server address never changes between releases, so installed copies keep their sign-in after `/plugin update`.
 
-`plugins/caliber/scripts/agent-post-push.sh` is a byte-identical copy of the server's
-`backend/app/services/caliber/hooks/agent-post-push.sh` in `infinum/caliber`. When the server's script
-changes, copy the file and record its `<hooks version> <sha256>` in `scripts/server-hooks.sha256`: a new line
-for a new hooks version; a line is fixed once its hooks version is released.
+`plugins/caliber/scripts/agent-post-push.sh` and `plugins/caliber/scripts/pre-push` are byte-identical copies
+of the server's `backend/app/services/caliber/hooks/` files of the same names in `infinum/caliber`, of one hooks
+version. When the server's scripts change, copy both and record each `<hooks version> <sha256> [<file>]` in
+`scripts/server-hooks.sha256` (a line without a file name is `agent-post-push.sh`'s): new lines for a new hooks
+version; a line is fixed once its hooks version is released. The session hook starts a virtual clone's commit
+sync with the plugin's own `pre-push`, so `/caliber:setup-usage` installs no git hook there (from 1.4.0).
 
 CI has no checkout of the server, so it compares the copy with the pinned sha256 only: it cannot see the
 server's script change under the same hooks version. Before every release, run `check-release.sh` by hand with

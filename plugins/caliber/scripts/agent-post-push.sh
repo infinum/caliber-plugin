@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 10
+# Caliber check on push: the agent session hook. caliber-hooks-version: 11
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -27,8 +27,9 @@
 #
 # In a clone of a virtual repository (caliber.syncActivity true, with its sync token), the
 # start of a session also starts the activity sync in the background, at most once an
-# hour (<git common dir>/caliber/hooks/pre-push --sync --session: the copy the install put
-# in the git directory, never a file of the client's working tree), and offers no setup.
+# hour (pre-push --sync --session: the plugin's own copy beside this file, else the copy
+# the install put in <git common dir>/caliber/hooks/, never a file of the client's working
+# tree), and offers no setup.
 #
 #   git config --local caliber.checkInSession false    turn it off for this clone
 
@@ -548,19 +549,22 @@ if [ -n "$session" ]; then
   if [ -t 0 ]; then exec </dev/null; fi
   # A clone set up for the activity sync: the sync starts now, detached (it ends at once
   # when it last ran less than an hour ago), and the clone is set up, so no offer. It is
-  # the git directory's copy of the hook: a merge may have put the client's file at
-  # .caliber/hooks/pre-push of the working tree.
+  # the pre-push beside this file (the plugin's own copy), else the git directory's copy:
+  # never a file of the working tree, where a merge may have put the client's.
   sync=""
   if [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ]; then
     common=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
-    if [ -n "$common" ] && [ -f "$common/caliber/sync-token" ] && [ -x "$common/caliber/hooks/pre-push" ]; then
+    beside=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || beside=""
+    syncer="$beside/pre-push"
+    if [ -z "$beside" ] || [ ! -x "$syncer" ]; then syncer="$common/caliber/hooks/pre-push"; fi
+    if [ -n "$common" ] && [ -f "$common/caliber/sync-token" ] && [ -x "$syncer" ]; then
       sync=1
       (cd "$top" && nohup python3 -I -c 'import os, sys
 try:
     os.setsid()
 except OSError:
     pass
-os.execv(sys.argv[1], sys.argv[1:])' "$common/caliber/hooks/pre-push" --sync --session \
+os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync --session \
         </dev/null >/dev/null 2>&1 &)
     fi
   fi
