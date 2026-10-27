@@ -2,7 +2,7 @@
 description: "Set up your own usage for Caliber (a client repository's commit sync, your agents' telemetry)"
 allowed-tools: mcp__plugin_caliber_caliber__setup-usage, mcp__plugin_caliber_caliber__projects, Bash(git config --local --get caliber.project), Read
 ---
-Call the Caliber tool `setup-usage` with `plugin_version` = "1.5.0" and `project` = the slug `git config --local --get caliber.project`
+Call the Caliber tool `setup-usage` with `plugin_version` = "1.6.0" and `project` = the slug `git config --local --get caliber.project`
 prints (this clone's project; a value that is not a slug, of lower-case letters, digits and hyphens, starting
 and ending with a letter or digit, at most 64 characters, does not count: ignore it and tell me without
 repeating it), else the slug the Caliber block of this repository names (between `<!-- caliber:start` and

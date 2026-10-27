@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 13
+# Caliber check on push: the git hook. caliber-hooks-version: 14
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, from the clone's pre-push hook as `--install` sets it
@@ -37,6 +37,9 @@
 #                                   with the plugin's own copy of this file
 #   "$(git rev-parse --git-common-dir)/caliber/hooks/pre-push" --sync
 #                                   send what is new now (--full: the whole history)
+#   "$(git rev-parse --git-common-dir)/caliber/hooks/pre-push" --sync --backfill
+#                                   once, in the background: the history from the date
+#                                   the server names (400 days back), saved tips or not
 #   git config --local caliber.syncActivity false    turn it off
 #
 # In such a clone the working tree is the client's to change: a merge or a checkout may
@@ -297,15 +300,18 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 13
+VERSION = 14
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
+#: A backfill (`--backfill`): the history from hello's `backfill_since`, past the saved tips,
+#: with the pull requests' own window; done once `sync-backfill` exists.
+BACKFILL = TRIGGER == "backfill"
 SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 PUSHED = [a for a in sys.argv[1:] if SHA.fullmatch(a)] if TRIGGER == "push" else []
 #: A part: at most `max` lines (hello's answer) and this many bytes; a run at most this
-#: many requests; pull requests: pages of 100, at most 5 a run.
-PART_BYTES, MAX_REQUESTS, PAGE, PAGES = 900 * 1024, 500, 100, 5
+#: many requests; pull requests: pages of 100, at most 5 a run (a backfill: 50).
+PART_BYTES, MAX_REQUESTS, PAGE, PAGES, BACKFILL_PAGES = 900 * 1024, 500, 100, 5, 50
 #: MESSAGE_CHARS: the server's `COMMIT_MESSAGE_MAX`; the hook sends one character more.
 MESSAGE_CHARS, HOUR, LOCK_AGE, WAIT = 4096, 3600, 2 * 3600, 120
 UPPER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
@@ -316,6 +322,9 @@ QUIET = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS=""
              GH_NO_UPDATE_NOTIFIER="1", GLAB_NO_PROMPT="1", NO_PROMPT="1")
 counts = {"commits": 0, "prs": 0, "history": 0, "branches": 0, "tags": 0, "parts": 0,
           "skipped": 0}
+#: Whether the pull requests' listing ended on a short page (all of them read), and where
+#: the window goes on after each page read (`after`, one per page).
+PAGING = {"done": False, "after": []}
 #: What the run's line says besides the counts (`note=tags-failed`).
 NOTES = {}
 os.umask(0o077)
@@ -538,7 +547,7 @@ def take_lock():
     return True
 
 
-deadline = time.time() + (WAIT if TRIGGER == "push" else 0)
+deadline = time.time() + (WAIT if TRIGGER in ("push", "backfill") else 0)
 while not take_lock():
     if time.time() >= deadline:
         sys.exit(0)                    # a run of this clone is under way
@@ -681,8 +690,11 @@ def main():
     run_id = answer["run"].strip()
     domains = {d.strip().lower() for d in (answer.get("domains") or "").split(",") if d.strip()}
     text = answer.get("text") == "1"
-    since = (answer.get("first_since") or "").strip()
+    since = (answer.get("backfill_since" if BACKFILL else "first_since") or "").strip()
     since = since if re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
+    if BACKFILL and not since:
+        log("no-backfill", hello=200)          # a server older than the backfill
+        return
     host, path = key.split("/", 1)
     me = norm(own_email) if own_email else None
     login = own_login(host)
@@ -718,11 +730,14 @@ def main():
     tips = [t for t in tips if t in commits_known]
     saved = [t for t in (read("sync-tips") or "").split()
              if SHA.fullmatch(t) and t in commits_known]
+    # A backfill reads past the saved tips, from its own date; a first run from hello's.
+    cut = [] if FULL or BACKFILL else saved
+    window_since = since if BACKFILL or ((first or not saved) and not FULL) else ""
     rangeargs = list(tips)
-    if saved and not FULL:
-        rangeargs += ["--not", *saved]
-    if (first or not saved) and not FULL and since:
-        rangeargs.insert(0, f"--since={since}")
+    if cut:
+        rangeargs += ["--not", *cut]
+    if window_since:
+        rangeargs.insert(0, f"--since={window_since}")
     partial = config(f"remote.{remote}.promisor") == "true" \
         or bool(config("extensions.partialclone"))
     shallow = set((read_shallow() or "").split())
@@ -781,8 +796,7 @@ def main():
         done = set(saved) if not FULL else set()
         if not partial and not shallow:
             groups += branch_groups(remote, branch, default_tip, PUSHED, done)
-        history = history_groups(default_tip, saved if not FULL else [],
-                                 since if (first or not saved) and not FULL else "",
+        history = history_groups(default_tip, cut, window_since,
                                  host, path, branch, text, partial or bool(shallow),
                                  clear_email)
         if history is None:
@@ -796,7 +810,8 @@ def main():
     tags_kept = None
     if SHA.fullmatch(default_tip):
         found = tag_groups(remote, default_tip,
-                           since if read("sync-tags") is None and not FULL else "")
+                           since if (BACKFILL or read("sync-tags") is None) and not FULL
+                           else "")
         if found is None:
             NOTES["note"] = "tags-failed"
         else:
@@ -805,26 +820,29 @@ def main():
             counts["tags"] = len(tag_lines)
 
     # 7. Pull requests updated since the saved window start, oldest first; only where the
-    # organisation allows the CLI.
-    window = (read("sync-window") or "").strip() or None
+    # organisation allows the CLI. A backfill keeps a window of its own.
+    window_file = "sync-backfill-window" if BACKFILL else "sync-window"
+    window = (read(window_file) or "").strip() or None
     start = None if FULL else (window or since or None)
+    limit_pages = BACKFILL_PAGES if BACKFILL else PAGES
     pages = []
+    PAGING["done"] = True                  # nothing to read: nothing left
     if not CLI["on"]:
         pass
     elif host == "github.com" and shutil.which("gh"):
-        pages = github_pages(f"{host}/{path}", start, text)
-        for rows in pages:
+        PAGING["done"] = False
+        pages = github_pages(f"{host}/{path}", start, text, limit_pages)
+        for rows, after in zip(pages, PAGING["after"]):
             for index, pr in enumerate(rows):
                 last = index == len(rows) - 1
-                groups.append((github_lines(pr, text, clear_login),
-                               (pr.get("updatedAt") or None) if last else None))
+                groups.append((github_lines(pr, text, clear_login), after if last else None))
     elif host == "gitlab.com" and shutil.which("glab") and shutil.which("jq"):
-        pages = gitlab_pages(path, start, text)
-        for rows in pages:
+        PAGING["done"] = False
+        pages = gitlab_pages(path, start, text, limit_pages)
+        for rows, after in zip(pages, PAGING["after"]):
             for index, mr in enumerate(rows):
                 last = index == len(rows) - 1
-                groups.append((gitlab_lines(path, mr, text, clear_login),
-                               (mr.get("updated_at") or None) if last else None))
+                groups.append((gitlab_lines(path, mr, text, clear_login), after if last else None))
     counts["prs"] = sum(len(rows) for rows in pages)
 
     # 8. Parts of at most `limit` lines and PART_BYTES; the last one says so.
@@ -850,7 +868,7 @@ def main():
             counts["skipped"] += int(found.group(1)) if found else 0
             for _, window_after in part:
                 if window_after:
-                    save("sync-window", window_after + "\n")
+                    save(window_file, window_after + "\n")
             continue
         if status == 409 and reason == "run-expired" and rehellos < 3:
             rehellos += 1
@@ -870,6 +888,15 @@ def main():
     save("sync-tips", "".join(t + "\n" for t in tips))
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
+    if BACKFILL:
+        if PAGING["done"] and tags_kept is not None:
+            save("sync-backfill", since + "\n")
+            try:
+                os.remove(where("sync-backfill-window"))
+            except OSError:
+                pass
+        else:
+            NOTES["note"] = "backfill-partial"   # the next --backfill goes on
     log("ok", hello=200, status=200)
 
 
@@ -1092,7 +1119,8 @@ def tagged_dates(objects):
 def tag_groups(remote, default_tip, since):
     """6c. A `G` line for each of the remote's version tags whose commit the default branch's
     history holds, new or moved since the saved tags (`sync-tags`: name and tag object);
-    with `since` (a first run), only those tagged since. Read with `git ls-remote`: no tag is
+    with `since` (a first run or a backfill, which reads every tag again), only those tagged
+    since. Read with `git ls-remote`: no tag is
     fetched into the clone's refs/tags, an annotated tag's object is fetched alone (no ref).
     Returns (groups, the tags to save), or None when the remote's tags cannot be read. A tag
     not in the history, or whose commit or object the clone lacks, is not saved: the next
@@ -1113,7 +1141,13 @@ def tag_groups(remote, default_tip, since):
     saved = dict(line.split("\t", 1) for line in (read("sync-tags") or "").splitlines()
                  if "\t" in line)
     kept = {name: obj for name, obj in objects.items() if saved.get(name) == obj}
-    new = sorted(name for name in objects if FULL or saved.get(name) != objects[name])[:TAGS]
+    new = sorted(name for name in objects
+                 if FULL or BACKFILL or saved.get(name) != objects[name])
+    if len(new) > TAGS:
+        # A regular run reads the rest next time (they are not saved); a full run or a
+        # backfill looks at every tag again, so its line says the rest was never read.
+        NOTES["tags"] = "truncated"
+        new = new[:TAGS]
     commit_of = {name: peeled.get(name, objects[name]) for name in new}
     batch = run(["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
                 stdin="".join(c + "\n" for c in set(commit_of.values())).encode()) or ""
@@ -1247,10 +1281,27 @@ def github_reviews(repository, rows):
     return result
 
 
-def github_pages(repository, start, text):
-    """At most PAGES pages of 100, oldest update first; a short page is the last."""
+def next_start(start, last):
+    """Where the listing goes on after a full page whose last update is `last`: there, as
+    the search is inclusive, unless the whole page was updated at `start` itself, where the
+    same page would come back for ever: then a second later (the rest of that second's pull
+    requests are left out)."""
+    if last != start:
+        return last
+    try:
+        moment = datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except ValueError:
+        return last
+    return (moment.astimezone(timezone.utc) + timedelta(seconds=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+
+
+def github_pages(repository, start, text, limit=PAGES):
+    """At most `limit` pages of 100, oldest update first; a short page is the last (and
+    sets `PAGING["done"]`). `PAGING["after"]` gets where the window goes on after each."""
     pages = []
-    for _ in range(PAGES):
+    PAGING["after"] = []
+    for _ in range(limit):
         query = ("" if start is None else f"updated:>={start} ") + "sort:updated-asc"
         out = run(["gh", "pr", "list", "-R", repository, "--state", "all", "--limit", str(PAGE),
                    "--search", query, "--json", GITHUB_FIELDS + (TEXT_FIELDS if text else "")],
@@ -1273,8 +1324,11 @@ def github_pages(repository, start, text):
             r.update(reviews.get(r["number"], {}))
         pages.append(rows)
         if len(rows) < PAGE or not rows[-1].get("updatedAt"):
+            PAGING["after"].append((rows[-1].get("updatedAt") or None) if rows else None)
+            PAGING["done"] = True
             break
-        start = rows[-1]["updatedAt"]
+        start = next_start(start, rows[-1]["updatedAt"])
+        PAGING["after"].append(start)
     return pages
 
 
@@ -1368,9 +1422,11 @@ def gitlab(path, endpoint, program):
         return None
 
 
-def gitlab_pages(path, start, text):
+def gitlab_pages(path, start, text, limit=PAGES):
+    """As `github_pages`, for GitLab's merge requests."""
     pages = []
-    for _ in range(PAGES):
+    PAGING["after"] = []
+    for _ in range(limit):
         query = "merge_requests?state=all&scope=all&order_by=updated_at&sort=asc&per_page=100"
         if start is not None:
             query += "&updated_after=" + urllib.parse.quote(start, safe="")
@@ -1382,8 +1438,11 @@ def gitlab_pages(path, start, text):
                       key=lambda r: r.get("updated_at") or "")
         pages.append(rows)
         if len(rows) < PAGE or not rows[-1].get("updated_at"):
+            PAGING["after"].append((rows[-1].get("updated_at") or None) if rows else None)
+            PAGING["done"] = True
             break
-        start = rows[-1]["updated_at"]
+        start = next_start(start, rows[-1]["updated_at"])
+        PAGING["after"].append(start)
     return pages
 
 
@@ -1468,6 +1527,7 @@ if [ "${1:-}" = "--sync" ]; then
   case "${1:-}" in
     --session) trigger=session; shift ;;
     --full) trigger=full; shift ;;
+    --backfill) trigger=backfill; shift ;;
     "") trigger=manual ;;
     *) trigger=push ;;                 # from the git hook: <remote> <pushed sha>...
   esac
