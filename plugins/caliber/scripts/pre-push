@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 11
+# Caliber check on push: the git hook. caliber-hooks-version: 13
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, from the clone's pre-push hook as `--install` sets it
@@ -45,7 +45,9 @@
 # the working tree hands --sync to the git directory's copy, or ends.
 #
 # The sync sends the clone's commits of the repository's branches, the pull requests the
-# default branch's history names, a fingerprint of each unmerged branch's change and, only
+# default branch's history names, the remote's version tags that history holds (each tag's
+# name, commit and dates, read with `git ls-remote`, never fetched into refs/tags), a
+# fingerprint of each unmerged branch's change and, only
 # where the organisation allows it and gh or glab is signed in, the provider's pull
 # requests (otherwise no gh, glab or provider API runs at all), to the endpoint the clone
 # was set up with, with every author hashed by a secret of the organisation; a commit's message and a pull request's
@@ -143,8 +145,9 @@ path, mark, where = sys.argv[1], sys.argv[2], sys.argv[3]
 line = os.environ["CALIBER_LINE"]
 previous = path + ".caliber-previous"
 #: The wrapper's version: an older wrapper of ours (one of version 5 has no version line)
-#: is replaced, so it gates on the check or the sync.
-VERSION = 6
+#: is replaced, so it gates on the check or the sync (6) and says why no check starts in a
+#: clone whose sync has no copy in the git directory (7).
+VERSION = 7
 # In the own hooks directory of the clone the hook that was there is not edited at all:
 # it is kept under another name and run first, with what git sent, whatever it is
 # written in and however it ends. Its result decides the push.
@@ -164,11 +167,18 @@ if [ -x "$here/pre-push.caliber-previous" ]; then
 fi
 on() { [ "$(git config --local --type=bool --get "caliber.$1" 2>/dev/null)" = true ]; }
 on checkOnPush || on syncActivity || exit 0
-# A clone of a virtual repository runs the copy in the git directory: its working tree is
-# the client's, and a merge may put a file of theirs at .caliber/hooks/pre-push.
+# While the sync is on (a clone of a virtual repository) no file of the working tree runs:
+# it is the client's, and a merge may put a file of theirs at .caliber/hooks/pre-push. The
+# copy in the git directory starts the sync, and the check when that is on too.
 if on syncActivity; then
   common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || exit 0
   caliber_hook="$common/caliber/hooks/pre-push"
+  if [ ! -x "$caliber_hook" ] && on checkOnPush; then
+    # The Caliber plugin syncs this clone and left no copy here: the check would need the
+    # working tree's file.
+    echo "Caliber: no background check from this hook: this clone's activity sync is on, and it runs no file of the working tree. Once Caliber reads this repository: git config --local caliber.syncActivity false" >&2
+    exit 0
+  fi
 else
   caliber_hook="$(git rev-parse --show-toplevel)/.caliber/hooks/pre-push"
 fi
@@ -284,10 +294,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 11
+VERSION = 13
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -304,7 +314,10 @@ SPACE = " \t\n\r\v\f"
 QUIET = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS="",
              SSH_ASKPASS_REQUIRE="never", GCM_INTERACTIVE="never", GH_PROMPT_DISABLED="1",
              GH_NO_UPDATE_NOTIFIER="1", GLAB_NO_PROMPT="1", NO_PROMPT="1")
-counts = {"commits": 0, "prs": 0, "history": 0, "branches": 0, "parts": 0, "skipped": 0}
+counts = {"commits": 0, "prs": 0, "history": 0, "branches": 0, "tags": 0, "parts": 0,
+          "skipped": 0}
+#: What the run's line says besides the counts (`note=tags-failed`).
+NOTES = {}
 os.umask(0o077)
 
 
@@ -315,7 +328,7 @@ def where(name):
 def log(result, **fields):
     """The run's one line: time, trigger, counts, HTTP status. Words and numbers only."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    words = " ".join(f"{k}={v}" for k, v in {**counts, **fields}.items())
+    words = " ".join(f"{k}={v}" for k, v in {**counts, **NOTES, **fields}.items())
     try:
         path = where("sync.log")
         lines = []
@@ -339,6 +352,8 @@ def read(name):
 
 
 def save(name, text):
+    if moved():                        # the old server's state: not saved after a move
+        return
     with open(where(name) + ".new", "w") as fh:
         fh.write(text)
     os.replace(where(name) + ".new", where(name))
@@ -479,6 +494,13 @@ for suffix in ("/mcp/plugin", "/mcp"):
 BASE = f"{urlsplit(endpoint).scheme}://{urlsplit(endpoint).netloc}{base_path}"
 SALT = ""
 
+
+def moved():
+    """Whether setup-usage moved the sync to another Caliber server (a new token or endpoint)
+    since this run read them."""
+    return (read("sync-token") or "").strip() != TOKEN or config("caliber.mcpUrl") != endpoint
+
+
 # 2. After a push: once the pushing git process has ended (at most two minutes). A
 # session's run: at most one an hour. One run per clone at a time.
 waited = os.environ.get("CALIBER_SYNC_WAIT") or ""
@@ -530,6 +552,15 @@ def release():
     except OSError:
         pass
 
+
+# The token and the endpoint again, now that this run holds the lock: setup-usage moves the
+# sync to another Caliber server while it holds the lock, and a run that read them before
+# must neither send the old token nor save the old server's state after the move (`save`
+# asks again before each file).
+if moved():
+    log("moved")
+    release()
+    sys.exit(0)
 
 own_email = config("user.email")
 logins = {}
@@ -760,6 +791,19 @@ def main():
         groups += history
         counts["history"] = len(history)
 
+    # 6c. The remote's release tags the default branch's history holds, new or moved since
+    # the saved ones. A failed read sends the rest of the run without them.
+    tags_kept = None
+    if SHA.fullmatch(default_tip):
+        found = tag_groups(remote, default_tip,
+                           since if read("sync-tags") is None and not FULL else "")
+        if found is None:
+            NOTES["note"] = "tags-failed"
+        else:
+            tag_lines, tags_kept = found
+            groups += tag_lines
+            counts["tags"] = len(tag_lines)
+
     # 7. Pull requests updated since the saved window start, oldest first; only where the
     # organisation allows the CLI.
     window = (read("sync-window") or "").strip() or None
@@ -822,8 +866,10 @@ def main():
             continue
         log("refused", hello=200, status=status, reason=re.sub(r"[^a-z-]", "", reason)[:20])
         return
-    # Only now: the next run starts from these tips.
+    # Only now: the next run starts from these tips and these tags.
     save("sync-tips", "".join(t + "\n" for t in tips))
+    if tags_kept is not None:
+        save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
     log("ok", hello=200, status=200)
 
 
@@ -1000,6 +1046,108 @@ def history_groups(default_tip, saved, since, host, path, branch, text, sizeless
         groups.append((group, None))
     groups.reverse()                   # oldest first, as the commits are
     return groups
+
+
+#: 6c: a tag's name the server takes as a release (`local_wire.release_tag`): after an
+#: optional `v`, at least two numbers, then a `-` part and a `+` build part, both optional.
+VERSION_TAG = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?"
+                         r"(?:\+[0-9A-Za-z.-]+)?")
+#: 6c: at most this many tags examined a run; refspecs per fetch of tag objects.
+TAGS, TAG_FETCH = 5000, 100
+
+
+def tagged_dates(objects):
+    """The tagger date of each annotated tag object, as an ISO date with its offset ("" for a
+    tag without a tagger); a tag object the clone does not have is left out. One `cat-file`."""
+    out = run(["git", "cat-file", "--batch"], stdin="".join(o + "\n" for o in objects).encode(),
+              timeout=600, raw=True) or b""
+    found, at = {}, 0
+    while at < len(out):
+        end = out.find(b"\n", at)
+        if end < 0:
+            break
+        head = out[at:end].decode("ascii", "replace").split()
+        at = end + 1
+        if len(head) != 3 or not head[2].isdigit():
+            continue                   # `<sha> missing`
+        size = int(head[2])
+        body, at = out[at:at + size], at + size + 1
+        if head[1] != "tag":
+            continue
+        header = body.split(b"\n\n", 1)[0].decode("utf-8", "replace")
+        tagger = re.search(r"^tagger .* ([0-9]+) ([+-])([0-9]{2})([0-9]{2})$", header, re.M)
+        if tagger is None:
+            found[head[0]] = ""
+            continue
+        offset = (int(tagger.group(3)) * 60 + int(tagger.group(4))) * \
+            (-1 if tagger.group(2) == "-" else 1)
+        try:
+            found[head[0]] = datetime.fromtimestamp(
+                int(tagger.group(1)), timezone(timedelta(minutes=offset))).isoformat()
+        except (OverflowError, OSError, ValueError):
+            found[head[0]] = ""
+    return found
+
+
+def tag_groups(remote, default_tip, since):
+    """6c. A `G` line for each of the remote's version tags whose commit the default branch's
+    history holds, new or moved since the saved tags (`sync-tags`: name and tag object);
+    with `since` (a first run), only those tagged since. Read with `git ls-remote`: no tag is
+    fetched into the clone's refs/tags, an annotated tag's object is fetched alone (no ref).
+    Returns (groups, the tags to save), or None when the remote's tags cannot be read. A tag
+    not in the history, or whose commit or object the clone lacks, is not saved: the next
+    run looks at it again."""
+    listed = run(["git", "ls-remote", "--tags", remote], timeout=120)
+    if listed is None:
+        return None
+    objects, peeled = {}, {}
+    for line in listed.splitlines():
+        sha, _, ref = line.strip().partition("\t")
+        if not SHA.fullmatch(sha) or not ref.startswith("refs/tags/"):
+            continue
+        name = ref[len("refs/tags/"):]
+        if name.endswith("^{}"):
+            peeled[name[:-3]] = sha
+        elif VERSION_TAG.fullmatch(name) and len(name) <= 255:
+            objects[name] = sha
+    saved = dict(line.split("\t", 1) for line in (read("sync-tags") or "").splitlines()
+                 if "\t" in line)
+    kept = {name: obj for name, obj in objects.items() if saved.get(name) == obj}
+    new = sorted(name for name in objects if FULL or saved.get(name) != objects[name])[:TAGS]
+    commit_of = {name: peeled.get(name, objects[name]) for name in new}
+    batch = run(["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                stdin="".join(c + "\n" for c in set(commit_of.values())).encode()) or ""
+    present = {line.split()[0] for line in batch.splitlines() if line.endswith(" commit")}
+    dates = run(["git", "log", "--no-walk=unsorted", "--no-show-signature",
+                 "--format=%H%x09%cI", "--stdin"],
+                stdin="".join(c + "\n" for c in present).encode()) if present else ""
+    committed = dict(line.split("\t", 1) for line in (dates or "").splitlines() if "\t" in line)
+    held = {}
+    for commit in set(committed):
+        held[commit] = git("merge-base", "--is-ancestor", commit, default_tip) is not None
+    new = [name for name in new if held.get(commit_of[name])]
+    annotated = [objects[name] for name in new if name in peeled]
+    tagged = tagged_dates(annotated) if annotated else {}
+    missing = [name for name in new if name in peeled and objects[name] not in tagged]
+    for start in range(0, len(missing), TAG_FETCH):
+        refspecs = [f"refs/tags/{name}" for name in missing[start:start + TAG_FETCH]]
+        if git("fetch", remote, "--no-tags", "--quiet", "--no-write-fetch-head", *refspecs,
+               timeout=600) is None:
+            git("fetch", remote, "--no-tags", "--quiet", *refspecs, timeout=600)
+    if missing:
+        tagged.update(tagged_dates([objects[name] for name in missing]))
+    groups = []
+    for name in new:
+        obj = objects[name]
+        if name in peeled and obj not in tagged:
+            continue                   # its object could not be fetched: the next run
+        at = tagged.get(obj, "") if name in peeled else ""
+        commit_at = committed[commit_of[name]]
+        kept[name] = obj
+        if since and (at or commit_at)[:10] < since:
+            continue                   # a first run: older than its window, never sent
+        groups.append((["\t".join(("G", name, commit_of[name], at, commit_at))], None))
+    return groups, kept
 
 
 class Part(list):
