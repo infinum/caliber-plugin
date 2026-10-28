@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 15
+# Caliber check on push: the git hook. caliber-hooks-version: 16
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, from the clone's pre-push hook as `--install` sets it
@@ -302,7 +302,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 15
+VERSION = 16
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"

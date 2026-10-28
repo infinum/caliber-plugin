@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 15
+# Caliber check on push: the agent session hook. caliber-hooks-version: 16
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -53,11 +53,15 @@ if [ "${2:-}" = "plugin" ]; then
     caliber_repo=""
     if [ -z "$session" ]; then
       # A clone of a virtual repository: after an agent's push, its sync (below), unless
-      # the clone's git hook starts it.
+      # the clone's git hook starts it: the Caliber line, and the git directory's copy it runs.
       [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ] || exit 0
       hook=$(git -C "$top" rev-parse --git-path hooks/pre-push 2>/dev/null) || exit 0
       case "$hook" in /*) ;; *) hook="$top/$hook" ;; esac
-      ! grep -qsF '# caliber:check-on-push' "$hook" || exit 0
+      gitdir=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || gitdir=""
+      if grep -qsF '# caliber:check-on-push' "$hook" && [ -n "$gitdir" ] \
+          && [ -x "$gitdir/caliber/hooks/pre-push" ]; then
+        exit 0
+      fi
       sync_push=1
     fi
   fi
@@ -440,7 +444,9 @@ for level, words in commands:
         if j >= len(rest) or rest[j] != "push":
             continue
         args = rest[j + 1:]
-        if any(a in ("--dry-run", "-n", "--delete", "-d", "--tags") for a in args):
+        # A push of tags alone starts no check, but it is a release for the sync (G lines).
+        if any(a in ("--dry-run", "-n", "--delete", "-d") for a in args) or (
+                "--tags" in args and not os.environ.get("CALIBER_HOOK_SYNC_PUSH")):
             continue
         if pushed:
             unnamed = True                     # a second push: which one to name?
