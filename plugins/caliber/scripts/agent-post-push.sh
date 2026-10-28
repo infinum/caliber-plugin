@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 14
+# Caliber check on push: the agent session hook. caliber-hooks-version: 15
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -29,7 +29,10 @@
 # start of a session also starts the activity sync in the background, at most once an
 # hour (pre-push --sync --session: the plugin's own copy beside this file, else the copy
 # the install put in <git common dir>/caliber/hooks/, never a file of the client's working
-# tree), and offers no setup.
+# tree), and offers no setup. After a successful `git push` an agent ran there, when the
+# clone's git hook has no Caliber line (the plugin's session route, or a hooks directory
+# the repository versions or shares), it starts that same sync, detached and silent: one
+# run per push, as the git hook's would be.
 #
 #   git config --local caliber.checkInSession false    turn it off for this clone
 
@@ -45,9 +48,18 @@ if [ "${2:-}" = "plugin" ]; then
   # session's line names its project only there; elsewhere the session's line may offer
   # the setup (the Python below decides).
   caliber_repo=1
+  sync_push=""
   if [ ! -d "$top/.caliber" ] && ! grep -qsF '<!-- caliber:start' "$top/CLAUDE.md" "$top/AGENTS.md"; then
-    [ -n "$session" ] || exit 0
     caliber_repo=""
+    if [ -z "$session" ]; then
+      # A clone of a virtual repository: after an agent's push, its sync (below), unless
+      # the clone's git hook starts it.
+      [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ] || exit 0
+      hook=$(git -C "$top" rev-parse --git-path hooks/pre-push 2>/dev/null) || exit 0
+      case "$hook" in /*) ;; *) hook="$top/$hook" ;; esac
+      ! grep -qsF '# caliber:check-on-push' "$hook" || exit 0
+      sync_push=1
+    fi
   fi
   [ -n "$session" ] || ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
 fi
@@ -379,6 +391,7 @@ WHERE = {"GIT_DIR", "GIT_WORK_TREE"}
 pushed = opened = elsewhere = unnamed = deleted = False
 moved, exported = set(), False         # a cd at these subshell depths; export GIT_DIR=...
 target = None                          # the branch a push names, when it names one
+remote = None                          # the remote it names
 for level, words in commands:
     moved = {m for m in moved if m <= level}
     k, assigned, env_moved = 0, set(), False
@@ -444,6 +457,7 @@ for level, words in commands:
                     and m < len(args):
                 m += 1
         unnamed = unnamed or any(a in ("--all", "--mirror", "--branches") for a in args)
+        remote = positional[0] if positional else None
         refspecs = positional[1:]
         if len(refspecs) > 1 or None in refspecs:
             unnamed = True
@@ -491,6 +505,14 @@ if isinstance(result, dict):
 output = text_of(result)
 if re.search(r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote rejected)\])",
              output) or "Everything up-to-date" in output:
+    sys.exit(0)
+
+# A clone of a virtual repository: no check, only the remote for its sync, of a push made
+# here (a push in another directory may be another repository\x27s).
+if os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
+    if pushed and not elsewhere:
+        print(remote if remote and re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", remote)
+              else "origin")
     sys.exit(0)
 
 branch = "" if elsewhere or unnamed else elsewhere_branch or current
@@ -579,6 +601,28 @@ input=$(cat)
 # Nearly every command ends here: one pass of grep, whatever the length of the input.
 printf '%s' "$input" | grep -q -e push -e 'pr create' -e 'mr create' -e pullrequests || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
+
+# A clone of a virtual repository (the plugin, above): the sync of a successful push, with
+# the pre-push beside this file, else the git directory's copy; never the working tree's.
+if [ -n "${sync_push:-}" ]; then
+  common=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || exit 0
+  [ -f "$common/caliber/sync-token" ] || exit 0
+  beside=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || beside=""
+  syncer="$beside/pre-push"
+  if [ -z "$beside" ] || [ ! -x "$syncer" ]; then syncer="$common/caliber/hooks/pre-push"; fi
+  [ -x "$syncer" ] || exit 0
+  remote=$(printf '%s' "$input" | CALIBER_HOOK_SYNC_PUSH=1 CALIBER_HOOK_ROOT=$top \
+    python3 -I -c "$program" "$agent") || exit 0
+  [ -n "$remote" ] || exit 0
+  (cd "$top" && nohup python3 -I -c 'import os, sys
+try:
+    os.setsid()
+except OSError:
+    pass
+os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync "$remote" \
+    </dev/null >/dev/null 2>&1 &)
+  exit 0
+fi
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ "$(git config --type=bool --get caliber.checkInSession 2>/dev/null)" != "false" ] || exit 0
 project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""

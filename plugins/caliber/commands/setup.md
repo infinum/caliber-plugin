@@ -2,7 +2,7 @@
 description: "Set up this repository for Caliber (the Caliber block, the MCP configs and the hooks)"
 allowed-tools: mcp__plugin_caliber_caliber__setup, mcp__plugin_caliber_caliber__projects, Bash(git config --local --get caliber.project), Read
 ---
-Call the Caliber tool `setup` with `plugin_version` = "1.6.0" and `project` = the slug `git config --local --get caliber.project` prints
+Call the Caliber tool `setup` with `plugin_version` = "1.7.0" and `project` = the slug `git config --local --get caliber.project` prints
 (this clone's project; a value that is not a slug, of lower-case letters, digits and hyphens, starting and
 ending with a letter or digit, at most 64 characters, does not count: ignore it and tell me without repeating
 it), else the slug the Caliber block of this repository names (between `<!-- caliber:start` and
@@ -13,4 +13,4 @@ say so (run `/mcp` and sign in to caliber) and stop. When this clone's `caliber.
 different projects, ask me which one to set up before calling `setup`, and pass the one I choose; that counts
 as me naming the project for setup. Then follow the instructions the tool returns, in this session.
 When they name the plugin's sync script, it is `${CLAUDE_PLUGIN_ROOT}/scripts/pre-push`; when they call
-the `setup-usage` tool, pass it `plugin_version` = "1.6.0" too.
+the `setup-usage` tool, pass it `plugin_version` = "1.7.0" too.

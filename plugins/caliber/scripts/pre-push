@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 14
+# Caliber check on push: the git hook. caliber-hooks-version: 15
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, from the clone's pre-push hook as `--install` sets it
@@ -24,7 +24,9 @@
 #   <this file> --install --virtual [--repository host/owner/name]
 #                                   the sync token on stdin: kept in <git common dir>/
 #                                   caliber/sync-token (only you can read it); copies
-#                                   the three hook files to <git common dir>/caliber/
+#                                   pre-push and agent-post-push.sh (check-on-push.sh
+#                                   too when it is beside this file: a virtual clone
+#                                   runs no check) to <git common dir>/caliber/
 #                                   hooks/ (when this is not that copy); installs the
 #                                   git hook; turns the sync on (caliber.syncActivity)
 #                                   and never the check. It reports to the clone's
@@ -300,7 +302,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 14
+VERSION = 15
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -1663,8 +1665,14 @@ print("own" if inside(hooks, common) else "versioned" if inside(hooks, root) els
     installed="$state_dir/hooks"
     if [ "$here" != "$installed" ]; then
       (umask 077 && mkdir -p "$installed") || exit 1
-      for name in pre-push check-on-push.sh agent-post-push.sh; do
-        [ -f "$here/$name" ] || { say "not installed: $here/$name is missing"; exit 1; }
+      # A virtual clone runs no check: check-on-push.sh is copied only when it is here (the
+      # Caliber plugin ships the other two).
+      for name in pre-push agent-post-push.sh check-on-push.sh; do
+        if [ ! -f "$here/$name" ]; then
+          [ "$name" = check-on-push.sh ] && continue
+          say "not installed: $here/$name is missing"
+          exit 1
+        fi
         cp "$here/$name" "$installed/$name.new" && chmod 755 "$installed/$name.new" \
           && mv -f "$installed/$name.new" "$installed/$name" || exit 1
       done
