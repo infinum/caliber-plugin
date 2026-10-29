@@ -1775,7 +1775,7 @@ fi
 # A clone set up before version 17 runs this file from the working tree, which the branch
 # checked out can change: --install once more makes its git hook run the git directory's
 # copy. That copy says when the repository's hooks are newer than it (read, never run).
-if [ -n "$check_on" ] && [ -z "$sync_on" ]; then
+if [ -n "$check_on" ]; then
   tree=$(cd "$root" 2>/dev/null && pwd -P) || tree=""
   copy=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)/caliber/hooks
   version() { sed -n '2{s/.*caliber-hooks-version: \([0-9][0-9]*\).*/\1/p;q;}' "$1" 2>/dev/null; }

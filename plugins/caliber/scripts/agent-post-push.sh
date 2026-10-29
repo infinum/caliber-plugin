@@ -184,6 +184,20 @@ def tag_refspec(spec):
     return (spec or "").rpartition(":")[2].startswith("refs/tags/")
 
 
+def push_sources(args, positional):
+    """The local refs a push sends, which the sync is handed as commits: "*" for every
+    branch; none for tags (the sync reads those from the remote)."""
+    if any(a in ("--all", "--mirror", "--branches") for a in args):
+        return ["*"]
+    found = ["HEAD"] if not positional[1:] and "--tags" not in args else []
+    for spec in positional[1:]:
+        source, colon, dst = (spec or "").lstrip("+").rpartition(":")
+        source = source if colon else dst
+        if source and not tag_refspec(spec) and not source.startswith("refs/tags/"):
+            found.append("HEAD" if source == "@" else source)
+    return found
+
+
 def this_directory(paths):
     """Whether `git -C <path>...` (each relative to the one before) names this directory
     or the top of this clone: `git -C . push` pushes from here."""
@@ -547,6 +561,9 @@ for level, words in commands:
             continue
         if pushed:
             unnamed = True                     # a second push: which one to name?
+            # Its commits go to the sync too, when it sends to the same remote.
+            if (positional[0] if positional else None) == remote:
+                sources += push_sources(args, positional)
             continue
         pushed = True
         elsewhere = here or env_moved or bool(moved) or exported or bool(assigned & WHERE)
@@ -554,17 +571,9 @@ for level, words in commands:
         tagged = "--tags" in args
         remote = positional[0] if positional else None
         refspecs = positional[1:]
-        # The local refs it sends, which the sync is handed as commits: a branch outside the
-        # clone\x27s fetch refspec (a --single-branch clone) gets no remote-tracking ref.
-        if any(a in ("--all", "--mirror", "--branches") for a in args):
-            sources = ["*"]
-        elif not refspecs and not tagged:
-            sources = ["HEAD"]
-        for spec in refspecs:
-            source, colon, dst = (spec or "").lstrip("+").rpartition(":")
-            source = source if colon else dst
-            if source and not tag_refspec(spec) and not source.startswith("refs/tags/"):
-                sources.append("HEAD" if source == "@" else source)
+        # The commits it sends go to the sync: a branch outside the clone\x27s fetch refspec
+        # (a --single-branch clone) gets no remote-tracking ref.
+        sources = push_sources(args, positional)
         if len(refspecs) > 1 or None in refspecs:
             unnamed = True
         elif refspecs:
@@ -730,6 +739,7 @@ if [ -n "${sync_push:-}" ]; then
   # The commits the push sent, as the git hook hands them over: the local refs it named
   # (plain names, checked above), each resolved here; "*" is every local branch.
   shas=""
+  set -f                                   # "*" is a word here, never a file name
   for ref in $(printf '%s\n' "$pushed" | sed 1d); do
     if [ "$ref" = "*" ]; then
       found=$(git -C "$top" for-each-ref --format='%(objectname)' refs/heads/ 2>/dev/null) || found=""
@@ -740,6 +750,7 @@ if [ -n "${sync_push:-}" ]; then
       case "$sha" in *[!0-9a-f]* | "") ;; *) shas="$shas $sha" ;; esac
     done
   done
+  set +f
   # shellcheck disable=SC2086 # the pushed shas: one word each
   (cd "$top" && nohup python3 -I -c 'import os, sys
 try:
