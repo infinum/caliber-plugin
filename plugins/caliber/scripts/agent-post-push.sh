@@ -1,39 +1,23 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 17
+# Caliber check on push: the agent session hook. caliber-hooks-version: 18
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
-# An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
-# with <agent> one of claude, codex, cursor, copilot, or gemini for an earlier setup's
-# entry (the format of what the agent sends on stdin and reads on stdout). After a successful `git push`, or a pull
-# request opened from the command line, it tells the agent to run the Caliber check
-# in this session. Every other command, and a failed one: no output.
+# Run after each shell command an agent runs:  agent-post-push.sh <agent>
+# (claude, codex, cursor, copilot or gemini: the format of its stdin and stdout). After
+# a successful `git push`, or a pull request opened from the command line, it tells the
+# agent to run the Caliber check in this session. Anything else: no output.
 #
-# The Caliber plugin of Claude Code ships this same file and runs it in every
-# repository as  agent-post-push.sh claude plugin : with that marker it does nothing in
-# a repository that has no Caliber block (CLAUDE.md, AGENTS.md) and no .caliber/, or
-# whose .claude/settings.json runs the repository's own copy (one message, not two).
-# At the start of a session it runs  agent-post-push.sh claude plugin session : one line
-# naming the project, where it came from and the Caliber instance (the host of
-# CALIBER_URL, else app.caliberhq.io); it asks nobody anything. Where the repository has
-# no Caliber block and no caliber.project, the line instead tells the agent to offer the
-# setup once (Yes, recommended; Not now; Don't ask again: git config --local caliber.askSetup false)
-# when a project of the sign-in lists the clone's origin, which the line gives without
-# any userinfo; with caliber.askSetup false (or no, off, 0) it says nothing, and on a
-# resume or a compaction it says nothing again. Every python3 here runs with -I, so a
-# module planted at the repository's root never runs.
+# The Claude Code plugin runs it everywhere as  agent-post-push.sh claude plugin : it
+# acts only with a Caliber block or .caliber/, and not where the repository's own copy runs.
+# At a session start,  agent-post-push.sh claude plugin session  prints one line: the
+# project, its source and the Caliber host. Without a project the line has the agent
+# offer the setup once, when a project lists the origin (shown without userinfo); never
+# with caliber.askSetup false, on a resume or a compaction.
+# python3 runs with -I, so a module planted at the repository's root never runs.
 #
-# The project is this clone's own `git config --local caliber.project <slug>`, else the
-# one the Caliber block names.
-#
-# In a clone of a virtual repository (caliber.syncActivity true, with its sync token), the
-# start of a session also starts the activity sync in the background, at most once an
-# hour (pre-push --sync --session: the plugin's own copy beside this file, else the copy
-# the install put in <git common dir>/caliber/hooks/, never a file of the client's working
-# tree), and offers no setup. After a successful `git push` an agent ran there, when the
-# clone's git hook does not start it (no Caliber line that runs the git directory's copy:
-# the plugin's session route, or a hooks directory the repository versions or shares), it
-# starts that same sync with the commits the push named, detached and silent: one run per
-# push, as the git hook's would be.
+# In a virtual repository's clone (caliber.syncActivity, a sync token) a session start
+# starts the activity sync and offers no setup; an agent's push starts it too, when the
+# clone's git hook does not.
 #
 #   git config --local caliber.checkInSession false    turn it off for this clone
 
@@ -45,18 +29,13 @@ if [ -n "${3:-}" ]; then
 fi
 if [ "${2:-}" = "plugin" ]; then
   top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-  # A repository that is Caliber's: the check after a push acts only there, and the
-  # session's line names its project only there; elsewhere the session's line may offer
-  # the setup (the Python below decides).
+  # Only a Caliber repository gets the check and the project line.
   caliber_repo=1
   sync_push=""
   if [ ! -d "$top/.caliber" ] && ! grep -qsF '<!-- caliber:start' "$top/CLAUDE.md" "$top/AGENTS.md"; then
     caliber_repo=""
     if [ -z "$session" ]; then
-      # A clone of a virtual repository: after an agent's push, its sync (below), unless
-      # the clone's git hook starts it: a Caliber line that runs the git directory's copy (the
-      # wrapper, or the line of version 17 on; an older line runs the working tree's), and
-      # that copy.
+      # A virtual clone: sync here unless the git hook runs the git directory's copy.
       [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ] || exit 0
       hook=$(git -C "$top" rev-parse --git-path hooks/pre-push 2>/dev/null) || exit 0
       case "$hook" in /*) ;; *) hook="$top/$hook" ;; esac
@@ -68,14 +47,12 @@ if [ "${2:-}" = "plugin" ]; then
       sync_push=1
     fi
   fi
-  # A repository's own copy runs instead of this one; a clone without .caliber has none.
+  # The repository's own copy runs instead.
   [ -n "$session" ] || [ -n "$sync_push" ] \
     || ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
 fi
 
-# What the agent is handed, written by the Python below: the session's line, or after a
-# shell command the check to run. It reads the agent's JSON on stdin (it has no single
-# quote in it: it is one shell word).
+# The program holds no single quote: it is one shell word.
 # shellcheck disable=SC2016
 program='
 import json
@@ -86,16 +63,13 @@ from urllib.parse import urlsplit
 
 agent = sys.argv[1]
 ROOT = os.environ.get("CALIBER_HOOK_ROOT") or "."
-# A project slug as Caliber makes one; anything else is not repeated.
+# Only a slug is repeated.
 SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?")
 
 
-# The files an agent reads, as the setup prompt writes them (the support table,
-# backend/app/services/caliber/agents.py): the full block in these two,
+# The files with the full block,
 FULL_FILES = ["AGENTS.md", "CLAUDE.md"]
-# and a pointer to it in these: an exact path, the files of a directory that carry the
-# markers ("<dir>/*.md"), or ".clinerules?", the path as a file or its marked files as a
-# directory. A test keeps this list equal to agents.POINTER_FILES.
+# and with a pointer; a test keeps it equal to agents.POINTER_FILES.
 POINTER_FILES = [
     ".github/copilot-instructions.md", ".cursor/rules/*.mdc", ".cursorrules",
     ".omp/AGENTS.md", ".devin/rules/*.md", ".junie/AGENTS.md", ".clinerules?",
@@ -134,13 +108,12 @@ def expand(entry):
 
 
 def instruction_files():
-    """The full-block files, then every pointer file the repository has, sorted."""
+    """The full-block files, then the pointer files found, sorted."""
     return FULL_FILES + sorted({p for entry in POINTER_FILES for p in expand(entry)})
 
 
 def block():
-    """(whether an instruction file of this repository has a Caliber block, the project
-    it names or None)."""
+    """(whether a Caliber block is there, the project it names or None)."""
     for name in instruction_files():
         try:
             with open(os.path.join(ROOT, name), encoding="utf-8", errors="replace") as fh:
@@ -159,14 +132,12 @@ def block():
 
 
 def block_slug():
-    """The project the Caliber block of this repository names, or None."""
+    """The project the Caliber block names, or None."""
     return block()[1]
 
 
 def origin_for_context():
-    """The clone\x27s origin as the model may read it: no userinfo (a token in an
-    https URL, a user other than git in an scp-like one), only plain characters, at
-    most 200 of them; else `unknown`."""
+    """The origin without userinfo (it may hold a token), or `unknown`."""
     raw = (os.environ.get("CALIBER_HOOK_ORIGIN") or "").strip()
     if "://" in raw:
         scheme, _, rest = raw.partition("://")
@@ -180,13 +151,12 @@ def origin_for_context():
 
 
 def tag_refspec(spec):
-    """Whether a push refspec names a tag (`refs/tags/v1`, `v1:refs/tags/v1`)."""
+    """Whether a push refspec names a tag."""
     return (spec or "").rpartition(":")[2].startswith("refs/tags/")
 
 
 def push_sources(args, positional):
-    """The local refs a push sends, which the sync is handed as commits: "*" for every
-    branch; none for tags (the sync reads those from the remote)."""
+    """The local refs a push sends; "*" for every branch; no tags."""
     if any(a in ("--all", "--mirror", "--branches") for a in args):
         return ["*"]
     found = ["HEAD"] if not positional[1:] and "--tags" not in args else []
@@ -194,36 +164,33 @@ def push_sources(args, positional):
         source, colon, dst = (spec or "").lstrip("+").rpartition(":")
         source = source if colon else dst
         if source and not tag_refspec(spec) and not source.startswith("refs/tags/"):
-            # A pattern (refs/heads/release/*) stays one: the branches it matches.
+            # A pattern stays one.
             found.append("HEAD" if source == "@" else source)
     return found
 
 
 def this_directory(paths):
-    """Whether `git -C <path>...` (each relative to the one before) names this directory
-    or the top of this clone: `git -C . push` pushes from here."""
+    """Whether `git -C <path>...` names here or the top of this clone."""
     base = os.getcwd()
     for path in paths:
         if path is None:
-            return False                       # an expansion: not known here
+            return False  # an expansion: unknown here
         base = os.path.join(base, path)
     return os.path.realpath(base) in (os.path.realpath(os.getcwd()), os.path.realpath(ROOT))
 
 
 def clone_slug():
-    """This clone\x27s own `caliber.project`, when it is a slug."""
+    """The caliber.project of this clone, when a slug."""
     value = os.environ.get("CALIBER_HOOK_PROJECT") or ""
     return value if SLUG.fullmatch(value) else None
 
 
-if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
+if os.environ.get("CALIBER_HOOK_SESSION"):  # a session start
     override = clone_slug()
     has_block, named = block()
     slug = override or named
     if not slug:
-        # No project anywhere: offer the setup once, unless a block that names no project
-        # is there (an old one; the agent sees it), the clone said not to ask, or the
-        # session goes on (a resume or a compaction: the person answered already).
+        # No project: offer the setup, unless an old block, the clone or a resume says no.
         try:
             source = (json.load(sys.stdin) or {}).get("source")
         except (ValueError, OSError, AttributeError):
@@ -239,12 +206,12 @@ if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
                  "`setup` tool with that project\x27s slug, in this session; not now: "
                  "nothing; don\x27t ask again: `git config --local caliber.askSetup false`. "
                  "When none lists it, say nothing.")
-        # Context for the model only: the person hears it as the agent\x27s question.
+        # For the model alone.
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                  "additionalContext": offer}}))
         sys.exit(0)
     if not os.environ.get("CALIBER_HOOK_CALIBER_REPO"):
-        sys.exit(0)  # the clone\x27s project alone, outside a Caliber repository: as before
+        sys.exit(0)  # not a Caliber repository: no line
     if not override:
         source = "the Caliber block"
     elif named and named != override:
@@ -258,7 +225,7 @@ if os.environ.get("CALIBER_HOOK_SESSION"):  # the line a session starts with
     if not host or not re.fullmatch(r"[a-z0-9.:-]{1,253}", host):
         host = "CALIBER_URL names no plain host"
     line = "Caliber: project `" + slug + "` (" + source + ") \u00b7 " + host
-    # The context reaches the model; `systemMessage` shows the same line to the person.
+    # The person sees systemMessage.
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                              "additionalContext": line},
                       "systemMessage": line}))
@@ -293,7 +260,7 @@ def text_of(value):
     return ""
 
 
-# What each agent calls the command it ran and what came back.
+# Each agent names these its own way.
 if agent == "copilot":
     tool_input, result = loads(data.get("toolArgs")), data.get("toolResult")
 elif agent == "cursor":
@@ -304,13 +271,9 @@ command = tool_input.get("command") if isinstance(tool_input, dict) else None
 if not isinstance(command, str):
     sys.exit(0)
 
-# The command as the shell reads it, in one pass (time in proportion to its length; at
-# most the first 200 kB are read): words of simple commands, with quoted text taken as
-# its words, here-document bodies and comments skipped, redirections dropped. A word
-# with an expansion ($x, $(...), backticks) is None: its value is not known here. A
-# command substitution is skipped as the shell reads it, inside double quotes too: its
-# own quotes and here-documents (a commit message written with `"$(cat <<\x27EOF\x27 ...)"`)
-# end nothing outside it.
+# The words of each simple command, as the shell reads them (one pass, at most 200 kB);
+# a word with an expansion is None. A command substitution is skipped whole, in double
+# quotes too, so its quotes and here-documents end nothing outside it.
 src, n = command[:200000], min(len(command), 200000)
 commands, words, word = [], [], []
 has_word = unknown = redirect = False
@@ -318,8 +281,7 @@ depth, pending, i = 0, [], 0
 
 
 def here_document(j):
-    """The here-document whose `<<` is at j: (its delimiter, whether tabs are stripped, the
-    index after the delimiter word)."""
+    """(delimiter, tabs stripped, index after it) of the `<<` at j."""
     j += 2
     tabs = j < n and src[j] == "-"
     j += 1 if tabs else 0
@@ -332,7 +294,7 @@ def here_document(j):
 
 
 def skip_bodies(j, documents):
-    """The index after the bodies of these here-documents, which start at j."""
+    """The index after these here-document bodies, from j."""
     for delimiter, tabs in documents:
         while j < n:
             k = src.find("\n", j)
@@ -345,7 +307,7 @@ def skip_bodies(j, documents):
 
 
 def close_quote(j, nested=0):
-    """The index of the `"` that ends the double-quoted text starting at j (n: none)."""
+    """The index of the closing `"` from j (n: none)."""
     while j < n and src[j] != "\x22":
         if src[j] == "\\":
             j += 2
@@ -360,8 +322,7 @@ def close_quote(j, nested=0):
 
 
 def close_substitution(j, nested=1):
-    """The index after the `)` that ends the command substitution whose text starts at j
-    (n: none): quotes, here-documents and nested substitutions in it are its own."""
+    """The index after the `)` closing the substitution from j (n: none)."""
     if nested > 50:
         return n
     level, documents = 1, []
@@ -459,7 +420,7 @@ while i < n:
         i += 1
     elif c == "\n":
         end_command()
-        i, pending = skip_bodies(i + 1, pending), []   # here-document bodies, in order
+        i, pending = skip_bodies(i + 1, pending), []  # here-document bodies
     elif src.startswith("<<", i) and not src.startswith("<<<", i):
         end_word()
         delimiter, tabs, i = here_document(i)
@@ -467,7 +428,7 @@ while i < n:
             pending.append((delimiter, tabs))
     elif c in "<>":
         if has_word and "".join(word).isdigit() and not unknown:
-            word, has_word = [], False           # the 2 of 2>
+            word, has_word = [], False  # the 2 of 2>
         end_word()
         while i < n and src[i] in "<>&":
             i += 1
@@ -484,18 +445,16 @@ while i < n:
         has_word, i = True, i + 1
 end_command()
 
-# What the simple commands do, in order.
 WRAPPERS = {"then", "do", "else", "elif", "if", "while", "until", "time", "command",
             "nohup", "exec", "sudo", "!"}
 WHERE = {"GIT_DIR", "GIT_WORK_TREE"}
 pushed = opened = elsewhere = unnamed = deleted = tagged = more = False
-moved, exported = set(), False         # a cd at these subshell depths; export GIT_DIR=...
-target = None                          # the branch a push names, when it names one
-remote = None                          # the remote it names
-# Where a push that names none goes: the current branch\x27s pushRemote, remote.pushDefault,
-# its remote (the sync route reads them), else origin.
+moved, exported = set(), False  # cd at these subshell depths; export GIT_DIR=...
+target = None  # the branch a push names
+remote = None  # the remote it names
+# Where a push naming no remote goes (the sync route asks git), else origin.
 PUSH_REMOTE = os.environ.get("CALIBER_HOOK_PUSH_REMOTE") or "origin"
-sources = []                           # what it sends, for the sync: local refs, or "*"
+sources = []  # the local refs it sends, for the sync
 for level, words in commands:
     moved = {m for m in moved if m <= level}
     k, assigned, env_moved = 0, set(), False
@@ -507,7 +466,7 @@ for level, words in commands:
             k += 1
             while k < len(words) and words[k] and words[k].startswith("-"):
                 k += 1
-            k += 1                             # the duration
+            k += 1  # the duration
         elif w == "env":
             k += 1
             while k < len(words) and words[k] and words[k].startswith("-"):
@@ -558,16 +517,13 @@ for level, words in commands:
             elif a in ("-o", "--push-option", "--repo", "--receive-pack", "--exec") \
                     and m < len(args):
                 m += 1
-        # A push of tags alone (`--tags` with no refspec, or tags\x27 refspecs only) starts no
-        # check, but it is a release for the sync (G lines).
+        # Tags alone: no check, but a release for the sync.
         if "--tags" in args and all(tag_refspec(s) for s in positional[1:]) \
                 and not os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
             continue
         if pushed:
-            unnamed = True                     # a second push: which one to name?
-            # Its commits go to the sync too, when it sends from here to the same remote
-            # (and it is a release or a branch even after a deletion first).
-            # (A push that names no remote goes to the clone\x27s configured one.)
+            unnamed = True  # a second push: which to name?
+            # Its commits go to the sync too if it sends from here to the same remote.
             later = positional[0] if positional else PUSH_REMOTE
             if not (here or env_moved or bool(moved) or exported or bool(assigned & WHERE)) \
                     and later is not None and later == remote:
@@ -581,8 +537,7 @@ for level, words in commands:
         tagged = "--tags" in args
         remote = positional[0] if positional else PUSH_REMOTE
         refspecs = positional[1:]
-        # The commits it sends go to the sync: a branch outside the clone\x27s fetch refspec
-        # (a --single-branch clone) gets no remote-tracking ref.
+        # Local refs: a --single-branch clone has no tracking ref for another branch.
         sources = push_sources(args, positional)
         if len(refspecs) > 1 or None in refspecs:
             unnamed = True
@@ -591,7 +546,7 @@ for level, words in commands:
             source, colon, dst = spec.rpartition(":")
             dst = dst if colon else spec
             if colon and not source:
-                deleted = True                 # git push origin :branch deletes it
+                deleted = True  # git push origin :branch
             elif dst.startswith("refs/tags/") or (dst.startswith("refs/") and not
                                                   dst.startswith("refs/heads/")):
                 unnamed = True
@@ -606,19 +561,19 @@ for level, words in commands:
                 ("-XPOST", "--data=", "--request=POST")) for w in rest)):
         opened = True
 if deleted and not opened and not ((tagged or more) and os.environ.get("CALIBER_HOOK_SYNC_PUSH")):
-    sys.exit(0)                # a deletion; with --tags or a later push still one for the sync
+    sys.exit(0)  # a deletion (tags or a later push still go to the sync)
 if not (pushed or opened):
     sys.exit(0)
 current = os.environ.get("CALIBER_HOOK_BRANCH") or ""
 if target not in (None, "HEAD", current):
-    elsewhere_branch = target       # another branch than the one checked out here
+    elsewhere_branch = target  # not the branch checked out here
 else:
     elsewhere_branch = None
 if not (elsewhere or unnamed) and elsewhere_branch is None \
         and os.environ.get("CALIBER_HOOK_RUNNING"):
-    sys.exit(0)            # the background check of this branch is under way
+    sys.exit(0)  # the git hook is checking this branch
 
-# The command failed: nothing reached the remote.
+# A failed command pushed nothing.
 if isinstance(result, dict):
     for key in ("exitCode", "exit_code", "returncode", "code"):
         if isinstance(result.get(key), int) and result[key] != 0:
@@ -628,18 +583,15 @@ if isinstance(result, dict):
     if result.get("error") or result.get("interrupted") is True:
         sys.exit(0)
 output = text_of(result)
-# A ref the push updated (` * [new branch]  x -> x`, `   1a2b..3c4d  x -> x`, ` + …`): a later
-# push of the command did something even when an earlier one had nothing to send.
+# A ref updated by any push of the command counts.
 updated = re.search(r"(?m)^\s*(?:\*|\+|[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,})\s.*\S -> \S", output)
 if not updated and (re.search(
         r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote rejected)\])", output)
         or "Everything up-to-date" in output):
     sys.exit(0)
 
-# A clone of a virtual repository: no check, only the remote for its sync of a push made
-# here (a push in another directory may be another repository\x27s), then the local refs
-# it sent, one a line: a plain ref name each (no option), a pattern of branches
-# (refs/heads/release/*), or "*" for every local branch.
+# A virtual clone: no check. The remote of a push made here (another directory may be
+# another repository), then the refs it sent, one a line, none taken for an option.
 if os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
     if pushed and not elsewhere:
         print(remote if remote and re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", remote)
@@ -655,9 +607,7 @@ if os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
 branch = "" if elsewhere or unnamed else elsewhere_branch or current
 if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/@+#=,-]{0,254}$", branch) or ".." in branch:
     branch = ""
-# The project: this clone\x27s `caliber.project`, else the one the Caliber block of this
-# repository names; a sign-in that sees several projects needs it on every call. (Not for
-# a command run in another directory: that may be another repository.)
+# No project for a command run elsewhere: it may be another repository.
 slug = None if elsewhere else clone_slug() or block_slug()
 if slug:
     project = ", project=\x22" + slug + "\x22"
@@ -697,19 +647,17 @@ else:
     out = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": message}}
 print(json.dumps(out))'
 
-# The session's line: no stdin to read, no call to make.
+# A session start: the line alone.
 if [ -n "$session" ]; then
   command -v python3 >/dev/null 2>&1 || exit 0
   project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
   origin=$(git -C "$top" remote get-url origin 2>/dev/null) || origin=""
-  # As git reads a boolean: false, no, off and 0 all say no (a value that is none: ask).
+  # As git reads a boolean: false, no, off and 0 say no.
   ask=$(git -C "$top" config --type=bool --get caliber.askSetup 2>/dev/null) || ask=""
-  # The SessionStart input (its `source`) comes on stdin; a terminal is not read.
+  # The SessionStart input is on stdin; never read a terminal.
   if [ -t 0 ]; then exec </dev/null; fi
-  # A clone set up for the activity sync: the sync starts now, detached (it ends at once
-  # when it last ran less than an hour ago), and the clone is set up, so no offer. It is
-  # the pre-push beside this file (the plugin's own copy), else the git directory's copy:
-  # never a file of the working tree, where a merge may have put the client's.
+  # A virtual clone: start the sync, detached, and offer no setup. Run the plugin's
+  # pre-push, else the git directory's: never the working tree's, which a merge may change.
   sync=""
   if [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ]; then
     common=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
@@ -735,12 +683,11 @@ fi
 
 input=$(cat)
 
-# Nearly every command ends here: one pass of grep, whatever the length of the input.
+# Most commands end here, after one grep.
 printf '%s' "$input" | grep -q -e push -e 'pr create' -e 'mr create' -e pullrequests || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
-# A clone of a virtual repository (the plugin, above): the sync of a successful push, with
-# the pre-push beside this file, else the git directory's copy; never the working tree's.
+# A virtual clone: sync a successful push, with the pre-push chosen as above.
 if [ -n "${sync_push:-}" ]; then
   common=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || exit 0
   [ -f "$common/caliber/sync-token" ] || exit 0
@@ -748,7 +695,7 @@ if [ -n "${sync_push:-}" ]; then
   syncer="$beside/pre-push"
   if [ -z "$beside" ] || [ ! -x "$syncer" ]; then syncer="$common/caliber/hooks/pre-push"; fi
   [ -x "$syncer" ] || exit 0
-  # Where a push that names no remote goes, as git decides it for the current branch.
+  # Where a push naming no remote goes, as git decides.
   current=$(git -C "$top" symbolic-ref --quiet --short HEAD 2>/dev/null) || current=""
   push_remote=""
   [ -z "$current" ] \
@@ -760,8 +707,8 @@ if [ -n "${sync_push:-}" ]; then
     CALIBER_HOOK_PUSH_REMOTE=$push_remote python3 -I -c "$program" "$agent") || exit 0
   remote=$(printf '%s\n' "$pushed" | sed -n 1p)
   [ -n "$remote" ] || exit 0
-  # The local branches a pattern names, as git push matches it: its "*" spans slashes
-  # (refs/heads/team/feature). (A function: bash 3.2 misreads a `case` inside $(...).)
+  # The branches a pattern names; as in git push, "*" spans slashes. A function:
+  # bash 3.2 misreads a `case` inside $(...).
   matching() {
     git -C "$top" for-each-ref --format='%(refname) %(objectname)' refs/heads/ 2>/dev/null \
       | while read -r name sha; do
@@ -769,11 +716,9 @@ if [ -n "${sync_push:-}" ]; then
           case "$name" in $1) printf '%s\n' "$sha" ;; esac
         done
   }
-  # The commits the push sent, as the git hook hands them over: the local refs it named
-  # (plain names or a pattern of branches, checked above), each resolved here; "*" is every
-  # local branch.
+  # The pushed commits, as the git hook would hand them over.
   shas=""
-  set -f                                   # "*" is a word here, never a file name
+  set -f  # "*" is a word here, never a file name
   for ref in $(printf '%s\n' "$pushed" | sed 1d); do
     if [ "$ref" = "*" ]; then
       found=$(git -C "$top" for-each-ref --format='%(objectname)' refs/heads/ 2>/dev/null) || found=""
@@ -802,9 +747,7 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
 
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
-# The background check of this branch's head is running (the git hook started it for
-# this very push): one check per push. Whether the push was of this branch at all, the
-# script below decides from the command.
+# Whether the git hook's check of this push is running: one check per push.
 running=""
 if [ -n "$branch" ]; then
   common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
@@ -816,10 +759,9 @@ if [ -n "$branch" ]; then
   if [ -n "$common" ] && [ -f "$lock" ]; then
     read -r pid lock_sha _ <"$lock" 2>/dev/null || pid=""
     case "$pid" in '' | *[!0-9]*) pid="" ;; esac
-    # Of this very push: the lock names the commit it checks ("<pid> <sha>"). A run of an
-    # earlier push (from a terminal, while this session's push started none) is not.
+    # Only a run for this push: the lock is "<pid> <sha>".
     [ "${lock_sha:-}" = "$(git rev-parse --verify --quiet HEAD 2>/dev/null)" ] || pid=""
-    # Alive, and still the runner (a pid is reused after a crash or a restart).
+    # Alive and still the runner (a pid is reused).
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       if [ -r "/proc/$pid/cmdline" ]; then
         tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'check-on-push\.sh' && running=1
@@ -830,7 +772,7 @@ if [ -n "$branch" ]; then
   fi
 fi
 
-# The agent sent JSON on stdin; the program above reads it there.
+# The agent's JSON goes to the program on stdin.
 printf '%s' "$input" | CALIBER_HOOK_SESSION='' CALIBER_HOOK_BRANCH=$branch \
   CALIBER_HOOK_RUNNING=$running CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
   python3 -I -c "$program" "$agent"
