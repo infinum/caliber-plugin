@@ -194,8 +194,8 @@ def push_sources(args, positional):
         source, colon, dst = (spec or "").lstrip("+").rpartition(":")
         source = source if colon else dst
         if source and not tag_refspec(spec) and not source.startswith("refs/tags/"):
-            # A pattern (refs/heads/*:refs/heads/*) is every local branch.
-            found.append("*" if "*" in source else "HEAD" if source == "@" else source)
+            # A pattern (refs/heads/release/*) stays one: the branches it matches.
+            found.append("HEAD" if source == "@" else source)
     return found
 
 
@@ -564,8 +564,10 @@ for level, words in commands:
             unnamed = True                     # a second push: which one to name?
             # Its commits go to the sync too, when it sends from here to the same remote
             # (and it is a release or a branch even after a deletion first).
+            # (A push that names no remote goes to the configured one, which may be it.)
+            later = positional[0] if positional else None
             if not (here or env_moved or bool(moved) or exported or bool(assigned & WHERE)) \
-                    and (positional[0] if positional else None) == remote:
+                    and (later == remote or None in (later, remote)):
                 found = push_sources(args, positional)
                 sources += found
                 more = more or bool(found) or "--tags" in args
@@ -629,15 +631,17 @@ if re.search(r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote re
 
 # A clone of a virtual repository: no check, only the remote for its sync of a push made
 # here (a push in another directory may be another repository\x27s), then the local refs
-# it sent, one a line: a plain ref name each (no option, no pattern), or "*" for every
-# local branch.
+# it sent, one a line: a plain ref name each (no option), a pattern of branches
+# (refs/heads/release/*), or "*" for every local branch.
 if os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
     if pushed and not elsewhere:
         print(remote if remote and re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", remote)
               else "origin")
         for ref in dict.fromkeys(sources):
-            if ref == "*" or (re.match(r"^[A-Za-z0-9][A-Za-z0-9._/@+-]{0,254}$", ref or "")
-                              and ".." not in ref and "@{" not in ref):
+            plain = re.match(r"^[A-Za-z0-9][A-Za-z0-9._/@+-]{0,254}$", ref or "")
+            pattern = re.match(r"^refs/heads/[A-Za-z0-9._/@+-]{0,200}\*[A-Za-z0-9._/@+-]{0,50}$",
+                               ref or "")
+            if ref == "*" or ((plain or pattern) and ".." not in ref and "@{" not in ref):
                 print(ref)
     sys.exit(0)
 
@@ -742,12 +746,15 @@ if [ -n "${sync_push:-}" ]; then
   remote=$(printf '%s\n' "$pushed" | sed -n 1p)
   [ -n "$remote" ] || exit 0
   # The commits the push sent, as the git hook hands them over: the local refs it named
-  # (plain names, checked above), each resolved here; "*" is every local branch.
+  # (plain names or a pattern of branches, checked above), each resolved here; "*" is every
+  # local branch.
   shas=""
   set -f                                   # "*" is a word here, never a file name
   for ref in $(printf '%s\n' "$pushed" | sed 1d); do
     if [ "$ref" = "*" ]; then
       found=$(git -C "$top" for-each-ref --format='%(objectname)' refs/heads/ 2>/dev/null) || found=""
+    elif [ "${ref#*\*}" != "$ref" ]; then
+      found=$(git -C "$top" for-each-ref --format='%(objectname)' "$ref" 2>/dev/null) || found=""
     else
       found=$(git -C "$top" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || found=""
     fi
