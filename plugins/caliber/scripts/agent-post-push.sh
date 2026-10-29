@@ -65,7 +65,9 @@ if [ "${2:-}" = "plugin" ]; then
       sync_push=1
     fi
   fi
-  [ -n "$session" ] || ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
+  # A repository's own copy runs instead of this one; a clone without .caliber has none.
+  [ -n "$session" ] || [ -n "$sync_push" ] \
+    || ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$top/.claude/settings.json" || exit 0
 fi
 
 # What the agent is handed, written by the Python below: the session's line, or after a
@@ -444,15 +446,8 @@ for level, words in commands:
         if j >= len(rest) or rest[j] != "push":
             continue
         args = rest[j + 1:]
-        # A push of tags alone starts no check, but it is a release for the sync (G lines).
-        if any(a in ("--dry-run", "-n", "--delete", "-d") for a in args) or (
-                "--tags" in args and not os.environ.get("CALIBER_HOOK_SYNC_PUSH")):
+        if any(a in ("--dry-run", "-n", "--delete", "-d") for a in args):
             continue
-        if pushed:
-            unnamed = True                     # a second push: which one to name?
-            continue
-        pushed = True
-        elsewhere = here or env_moved or bool(moved) or exported or bool(assigned & WHERE)
         positional, m = [], 0
         while m < len(args):
             a = args[m]
@@ -462,6 +457,15 @@ for level, words in commands:
             elif a in ("-o", "--push-option", "--repo", "--receive-pack", "--exec") \
                     and m < len(args):
                 m += 1
+        # A push of tags alone starts no check, but it is a release for the sync (G lines).
+        if "--tags" in args and len(positional) < 2 \
+                and not os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
+            continue
+        if pushed:
+            unnamed = True                     # a second push: which one to name?
+            continue
+        pushed = True
+        elsewhere = here or env_moved or bool(moved) or exported or bool(assigned & WHERE)
         unnamed = unnamed or any(a in ("--all", "--mirror", "--branches") for a in args)
         remote = positional[0] if positional else None
         refspecs = positional[1:]
