@@ -176,6 +176,11 @@ def origin_for_context():
     return raw if re.fullmatch(r"[A-Za-z0-9._:@/+-]{1,200}", raw) else "unknown"
 
 
+def tag_refspec(spec):
+    """Whether a push refspec names a tag (`refs/tags/v1`, `v1:refs/tags/v1`)."""
+    return (spec or "").rpartition(":")[2].startswith("refs/tags/")
+
+
 def clone_slug():
     """This clone\x27s own `caliber.project`, when it is a slug."""
     value = os.environ.get("CALIBER_HOOK_PROJECT") or ""
@@ -457,8 +462,9 @@ for level, words in commands:
             elif a in ("-o", "--push-option", "--repo", "--receive-pack", "--exec") \
                     and m < len(args):
                 m += 1
-        # A push of tags alone starts no check, but it is a release for the sync (G lines).
-        if "--tags" in args and len(positional) < 2 \
+        # A push of tags alone (`--tags` with no refspec, or tags\x27 refspecs only) starts no
+        # check, but it is a release for the sync (G lines).
+        if "--tags" in args and all(tag_refspec(s) for s in positional[1:]) \
                 and not os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
             continue
         if pushed:
