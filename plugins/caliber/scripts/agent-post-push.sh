@@ -194,7 +194,8 @@ def push_sources(args, positional):
         source, colon, dst = (spec or "").lstrip("+").rpartition(":")
         source = source if colon else dst
         if source and not tag_refspec(spec) and not source.startswith("refs/tags/"):
-            found.append("HEAD" if source == "@" else source)
+            # A pattern (refs/heads/*:refs/heads/*) is every local branch.
+            found.append("*" if "*" in source else "HEAD" if source == "@" else source)
     return found
 
 
@@ -487,7 +488,7 @@ end_command()
 WRAPPERS = {"then", "do", "else", "elif", "if", "while", "until", "time", "command",
             "nohup", "exec", "sudo", "!"}
 WHERE = {"GIT_DIR", "GIT_WORK_TREE"}
-pushed = opened = elsewhere = unnamed = deleted = tagged = False
+pushed = opened = elsewhere = unnamed = deleted = tagged = more = False
 moved, exported = set(), False         # a cd at these subshell depths; export GIT_DIR=...
 target = None                          # the branch a push names, when it names one
 remote = None                          # the remote it names
@@ -561,9 +562,13 @@ for level, words in commands:
             continue
         if pushed:
             unnamed = True                     # a second push: which one to name?
-            # Its commits go to the sync too, when it sends to the same remote.
-            if (positional[0] if positional else None) == remote:
-                sources += push_sources(args, positional)
+            # Its commits go to the sync too, when it sends from here to the same remote
+            # (and it is a release or a branch even after a deletion first).
+            if not (here or env_moved or bool(moved) or exported or bool(assigned & WHERE)) \
+                    and (positional[0] if positional else None) == remote:
+                found = push_sources(args, positional)
+                sources += found
+                more = more or bool(found) or "--tags" in args
             continue
         pushed = True
         elsewhere = here or env_moved or bool(moved) or exported or bool(assigned & WHERE)
@@ -595,8 +600,8 @@ for level, words in commands:
             "POST" in rest or any(w in ("-d", "--data", "--json") or (w or "").startswith(
                 ("-XPOST", "--data=", "--request=POST")) for w in rest)):
         opened = True
-if deleted and not opened and not (tagged and os.environ.get("CALIBER_HOOK_SYNC_PUSH")):
-    sys.exit(0)                # a deletion; with --tags still a release for the sync
+if deleted and not opened and not ((tagged or more) and os.environ.get("CALIBER_HOOK_SYNC_PUSH")):
+    sys.exit(0)                # a deletion; with --tags or a later push still one for the sync
 if not (pushed or opened):
     sys.exit(0)
 current = os.environ.get("CALIBER_HOOK_BRANCH") or ""
