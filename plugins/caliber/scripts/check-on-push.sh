@@ -185,9 +185,16 @@ try:
         raw = resp.read()
 except Exception as exc:  # noqa: BLE001 - any failure is a request failure
     print("Caliber check: request failed: " + type(exc).__name__ + ": " + str(exc), file=sys.stderr)
-    sys.exit(2)
+    # 3: Caliber answered and refused the token.
+    sys.exit(3 if getattr(exc, "code", None) in (401, 403) else 2)
 sys.stdout.write(raw.decode("utf-8", "replace"))
 PY
+}
+
+# A failed rpc: its exit code 3 is a refused CALIBER_TOKEN, not a silent server.
+not_answered() {
+  [ "$1" != 3 ] || stop "not started: Caliber refused CALIBER_TOKEN (another Caliber's token, or a revoked one); without CALIBER_TOKEN the check uses the Caliber plugin's sign-in."
+  stop "not started: Caliber did not answer."
 }
 
 status_args() {
@@ -235,11 +242,11 @@ pr_number=""
 if [ "${mode}" = "plugin" ]; then
   DECISION="branch"
 else
-BRANCH_JSON="$(rpc tools/call "$(status_args head_branch "${branch}")")" || stop "not started: Caliber did not answer."
+BRANCH_JSON="$(rpc tools/call "$(status_args head_branch "${branch}")")" || not_answered $?
 COMMIT_JSON=""
 if printf '%s' "${BRANCH_JSON}" | grep -q 'no open check for branch'; then
   # No check of the branch yet: the commit's answer has the policy.
-  COMMIT_JSON="$(rpc tools/call "$(status_args head_sha "${sha}")")" || stop "not started: Caliber did not answer."
+  COMMIT_JSON="$(rpc tools/call "$(status_args head_sha "${sha}")")" || not_answered $?
 fi
 DECISION="$(BRANCH_JSON="${BRANCH_JSON}" COMMIT_JSON="${COMMIT_JSON}" python3 -I - "${branch}" "${sha}" << 'PY'
 import json, os, sys
@@ -588,7 +595,7 @@ if os.environ.get("CALIBER_REPO"):
     arguments["repo"] = os.environ["CALIBER_REPO"]
 print(json.dumps({"name": "check", "arguments": arguments}))
 ')"
-PROMPT_JSON="$(rpc prompts/get "${PROMPT_JSON}")" || stop "not started: Caliber did not answer."
+PROMPT_JSON="$(rpc prompts/get "${PROMPT_JSON}")" || not_answered $?
 PROMPT="$(printf '%s' "${PROMPT_JSON}" | python3 -I -c '
 import json, sys
 try:
