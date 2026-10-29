@@ -745,6 +745,15 @@ if [ -n "${sync_push:-}" ]; then
     python3 -I -c "$program" "$agent") || exit 0
   remote=$(printf '%s\n' "$pushed" | sed -n 1p)
   [ -n "$remote" ] || exit 0
+  # The local branches a pattern names, as git push matches it: its "*" spans slashes
+  # (refs/heads/team/feature). (A function: bash 3.2 misreads a `case` inside $(...).)
+  matching() {
+    git -C "$top" for-each-ref --format='%(refname) %(objectname)' refs/heads/ 2>/dev/null \
+      | while read -r name sha; do
+          # shellcheck disable=SC2254 # the pattern is the refspec's, matched as git does
+          case "$name" in $1) printf '%s\n' "$sha" ;; esac
+        done
+  }
   # The commits the push sent, as the git hook hands them over: the local refs it named
   # (plain names or a pattern of branches, checked above), each resolved here; "*" is every
   # local branch.
@@ -754,7 +763,7 @@ if [ -n "${sync_push:-}" ]; then
     if [ "$ref" = "*" ]; then
       found=$(git -C "$top" for-each-ref --format='%(objectname)' refs/heads/ 2>/dev/null) || found=""
     elif [ "${ref#*\*}" != "$ref" ]; then
-      found=$(git -C "$top" for-each-ref --format='%(objectname)' "$ref" 2>/dev/null) || found=""
+      found=$(matching "$ref")
     else
       found=$(git -C "$top" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || found=""
     fi
