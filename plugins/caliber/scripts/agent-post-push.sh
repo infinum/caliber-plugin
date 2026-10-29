@@ -492,6 +492,9 @@ pushed = opened = elsewhere = unnamed = deleted = tagged = more = False
 moved, exported = set(), False         # a cd at these subshell depths; export GIT_DIR=...
 target = None                          # the branch a push names, when it names one
 remote = None                          # the remote it names
+# Where a push that names none goes: the current branch\x27s pushRemote, remote.pushDefault,
+# its remote (the sync route reads them), else origin.
+PUSH_REMOTE = os.environ.get("CALIBER_HOOK_PUSH_REMOTE") or "origin"
 sources = []                           # what it sends, for the sync: local refs, or "*"
 for level, words in commands:
     moved = {m for m in moved if m <= level}
@@ -564,10 +567,10 @@ for level, words in commands:
             unnamed = True                     # a second push: which one to name?
             # Its commits go to the sync too, when it sends from here to the same remote
             # (and it is a release or a branch even after a deletion first).
-            # (A push that names no remote goes to the configured one, which may be it.)
-            later = positional[0] if positional else None
+            # (A push that names no remote goes to the clone\x27s configured one.)
+            later = positional[0] if positional else PUSH_REMOTE
             if not (here or env_moved or bool(moved) or exported or bool(assigned & WHERE)) \
-                    and (later == remote or None in (later, remote)):
+                    and later is not None and later == remote:
                 found = push_sources(args, positional)
                 sources += found
                 more = more or bool(found) or "--tags" in args
@@ -576,7 +579,7 @@ for level, words in commands:
         elsewhere = here or env_moved or bool(moved) or exported or bool(assigned & WHERE)
         unnamed = unnamed or any(a in ("--all", "--mirror", "--branches") for a in args)
         tagged = "--tags" in args
-        remote = positional[0] if positional else None
+        remote = positional[0] if positional else PUSH_REMOTE
         refspecs = positional[1:]
         # The commits it sends go to the sync: a branch outside the clone\x27s fetch refspec
         # (a --single-branch clone) gets no remote-tracking ref.
@@ -625,8 +628,12 @@ if isinstance(result, dict):
     if result.get("error") or result.get("interrupted") is True:
         sys.exit(0)
 output = text_of(result)
-if re.search(r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote rejected)\])",
-             output) or "Everything up-to-date" in output:
+# A ref the push updated (` * [new branch]  x -> x`, `   1a2b..3c4d  x -> x`, ` + …`): a later
+# push of the command did something even when an earlier one had nothing to send.
+updated = re.search(r"(?m)^\s*(?:\*|\+|[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,})\s.*\S -> \S", output)
+if not updated and (re.search(
+        r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote rejected)\])", output)
+        or "Everything up-to-date" in output):
     sys.exit(0)
 
 # A clone of a virtual repository: no check, only the remote for its sync of a push made
@@ -741,8 +748,16 @@ if [ -n "${sync_push:-}" ]; then
   syncer="$beside/pre-push"
   if [ -z "$beside" ] || [ ! -x "$syncer" ]; then syncer="$common/caliber/hooks/pre-push"; fi
   [ -x "$syncer" ] || exit 0
+  # Where a push that names no remote goes, as git decides it for the current branch.
+  current=$(git -C "$top" symbolic-ref --quiet --short HEAD 2>/dev/null) || current=""
+  push_remote=""
+  [ -z "$current" ] \
+    || push_remote=$(git -C "$top" config --get "branch.$current.pushRemote" 2>/dev/null) || push_remote=""
+  [ -n "$push_remote" ] || push_remote=$(git -C "$top" config --get remote.pushDefault 2>/dev/null) || push_remote=""
+  [ -n "$push_remote" ] || [ -z "$current" ] \
+    || push_remote=$(git -C "$top" config --get "branch.$current.remote" 2>/dev/null) || push_remote=""
   pushed=$(printf '%s' "$input" | CALIBER_HOOK_SYNC_PUSH=1 CALIBER_HOOK_ROOT=$top \
-    python3 -I -c "$program" "$agent") || exit 0
+    CALIBER_HOOK_PUSH_REMOTE=$push_remote python3 -I -c "$program" "$agent") || exit 0
   remote=$(printf '%s\n' "$pushed" | sed -n 1p)
   [ -n "$remote" ] || exit 0
   # The local branches a pattern names, as git push matches it: its "*" spans slashes
