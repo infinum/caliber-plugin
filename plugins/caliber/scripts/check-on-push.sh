@@ -841,6 +841,9 @@ if [ "${mode}" = "token" ]; then
 else
   (
     cd "${checkout_dir}" || exit 1
+    # The pushed commit's .mcp.json could start its own MCP servers: gone from this
+    # throwaway checkout before the agent starts (CodeRabbit on infinum/caliber-plugin#7).
+    rm -f -- "${checkout_dir}/.mcp.json"
     exec env -u CALIBER_TOKEN \
       claude -p "${PROMPT}" \
       --setting-sources user --settings "${AGENT_SETTINGS}" --permission-mode default \
