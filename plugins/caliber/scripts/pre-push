@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 16
+# Caliber check on push: the git hook. caliber-hooks-version: 17
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, from the clone's pre-push hook as `--install` sets it
@@ -12,7 +12,13 @@
 #                                                   repository's MCP config names now,
 #                                                   or with none CALIBER_URL's or the
 #                                                   plugin's default; only a check with
-#                                                   CALIBER_TOKEN uses it)
+#                                                   CALIBER_TOKEN uses it), and copies
+#                                                   the three hook files to <git common
+#                                                   dir>/caliber/hooks/: the git hook
+#                                                   runs that copy, never the working
+#                                                   tree's (a branch someone else wrote
+#                                                   may change those). Run it again after
+#                                                   the repository's hooks change.
 #   git config --local caliber.checkOnPush false    turn it off (true: on again)
 #
 # Nothing starts without `caliber.checkOnPush = true` in the clone's git config. The
@@ -47,7 +53,9 @@
 # In such a clone the working tree is the client's to change: a merge or a checkout may
 # put any file at any path of it. So only a copy outside the working tree sends the token:
 # the one in the git directory, where no checkout writes, or the Caliber plugin's. A copy in
-# the working tree hands --sync to the git directory's copy, or ends.
+# the working tree hands --sync to the git directory's copy, or ends. The same holds for
+# the check in every clone: the branch checked out may be someone else's, so the git hook
+# runs the git directory's copy alone (from version 17 on).
 #
 # The sync sends the clone's commits of the repository's branches, the pull requests the
 # default branch's history names, the remote's version tags that history holds (each tag's
@@ -150,9 +158,10 @@ path, mark, where = sys.argv[1], sys.argv[2], sys.argv[3]
 line = os.environ["CALIBER_LINE"]
 previous = path + ".caliber-previous"
 #: The wrapper's version: an older wrapper of ours (one of version 5 has no version line)
-#: is replaced, so it gates on the check or the sync (6) and says why no check starts in a
-#: clone whose sync has no copy in the git directory (7).
-VERSION = 7
+#: is replaced, so it gates on the check or the sync (6), says why no check starts in a
+#: clone whose sync has no copy in the git directory (7), and runs the git directory's copy
+#: in every clone, never a file of the working tree (8).
+VERSION = 8
 # In the own hooks directory of the clone the hook that was there is not edited at all:
 # it is kept under another name and run first, with what git sent, whatever it is
 # written in and however it ends. Its result decides the push.
@@ -172,22 +181,18 @@ if [ -x "$here/pre-push.caliber-previous" ]; then
 fi
 on() { [ "$(git config --local --type=bool --get "caliber.$1" 2>/dev/null)" = true ]; }
 on checkOnPush || on syncActivity || exit 0
-# While the sync is on (a clone of a virtual repository) no file of the working tree runs:
-# it is the client's, and a merge may put a file of theirs at .caliber/hooks/pre-push. The
-# copy in the git directory starts the sync, and the check when that is on too.
-if on syncActivity; then
-  common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || exit 0
-  caliber_hook="$common/caliber/hooks/pre-push"
-  if [ ! -x "$caliber_hook" ] && on checkOnPush; then
-    # The Caliber plugin syncs this clone and left no copy here: the check would need the
-    # working tree's file.
-    echo "Caliber: no background check from this hook: this clone's activity sync is on, and it runs no file of the working tree. Once Caliber reads this repository: git config --local caliber.syncActivity false" >&2
-    exit 0
-  fi
-else
-  caliber_hook="$(git rev-parse --show-toplevel)/.caliber/hooks/pre-push"
+# No file of the working tree runs: it is what the checked-out branch holds (a branch
+# someone else wrote, or in a clone of a virtual repository the client's). The copy in the
+# git directory, which --install made and no checkout, merge or pull writes, starts the
+# check and the sync.
+common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || exit 0
+caliber_hook="$common/caliber/hooks/pre-push"
+if [ ! -x "$caliber_hook" ]; then
+  # The sync alone has its session route (the Caliber plugin's own copy); the check has none.
+  ! on checkOnPush || echo "Caliber: no background check from this hook: this clone has no copy of Caliber's hook in its git directory. Run .caliber/hooks/pre-push --install once more (or /caliber:setup)." >&2
+  exit 0
 fi
-if [ -x "$caliber_hook" ]; then feed | "$caliber_hook" "$@" || true; fi
+feed | "$caliber_hook" "$@" || true
 exit 0
 """ % (mark, VERSION)
 # A hook that asks for its own name or place would not find it under another name.
@@ -228,6 +233,16 @@ if data is not None and mark.encode() in data and where != "shared":
             and created[1].endswith(mark) and created[1] != line and created[2] == "":
         with open(path, "w") as fh:
             fh.write("#!/bin/sh\n" + line + "\n")
+        print("updated")
+        sys.exit(0)
+    # The line an earlier install added at the end of a team's hook (it ran the working
+    # tree's copy): this version's takes its place, and nothing else of the file changes.
+    ours = [k for k, text_line in enumerate(created)
+            if text_line.startswith("caliber_rc=$?; ") and text_line.endswith(" " + mark)]
+    if where == "versioned" and len(ours) == 1 and created[ours[0]] != line:
+        created[ours[0]] = line
+        with open(path, "w") as fh:
+            fh.write("\n".join(created))
         print("updated")
         sys.exit(0)
 if data is not None and mark.encode() in data:
@@ -302,7 +317,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 16
+VERSION = 17
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -1658,25 +1673,28 @@ print("own" if inside(hooks, common) else "versioned" if inside(hooks, root) els
       say "the activity sync is on for this clone, reporting to $url: at the start of each Claude Code session (off: git config --local caliber.syncActivity false)"
       exit 0
     fi
-    # The hook files the sync runs: copied to the git directory, where no checkout, merge
-    # or pull writes (the working tree's .caliber/hooks/ is excluded, and git replaces an
-    # excluded file with a tracked one of the same path without a word). The git hook,
-    # the session hook and --sync run this copy alone.
-    installed="$state_dir/hooks"
-    if [ "$here" != "$installed" ]; then
-      (umask 077 && mkdir -p "$installed") || exit 1
-      # A virtual clone runs no check: check-on-push.sh is copied only when it is here (the
-      # Caliber plugin ships the other two).
-      for name in pre-push agent-post-push.sh check-on-push.sh; do
-        if [ ! -f "$here/$name" ]; then
-          [ "$name" = check-on-push.sh ] && continue
-          say "not installed: $here/$name is missing"
-          exit 1
-        fi
-        cp "$here/$name" "$installed/$name.new" && chmod 755 "$installed/$name.new" \
-          && mv -f "$installed/$name.new" "$installed/$name" || exit 1
-      done
-    fi
+  fi
+  # The hook files the git hook runs: copied to the git directory, where no checkout, merge
+  # or pull writes (a branch checked out may hold any .caliber/hooks/, and in a virtual
+  # clone git replaces the excluded files with tracked ones of the same path without a
+  # word). The git hook, the session hook of a virtual clone and --sync run this copy
+  # alone; this install, run again, replaces it.
+  installed="$common/caliber/hooks"
+  if [ "$here" != "$installed" ]; then
+    (umask 077 && mkdir -p "$installed") || exit 1
+    # A virtual clone runs no check: check-on-push.sh is copied only when it is here (the
+    # Caliber plugin ships the other two).
+    for name in pre-push agent-post-push.sh check-on-push.sh; do
+      if [ ! -f "$here/$name" ]; then
+        [ "$name" = check-on-push.sh ] && [ -n "$virtual" ] && continue
+        say "not installed: $here/$name is missing"
+        exit 1
+      fi
+      cp "$here/$name" "$installed/$name.new" && chmod 755 "$installed/$name.new" \
+        && mv -f "$installed/$name.new" "$installed/$name" || exit 1
+    done
+  fi
+  if [ -n "$virtual" ]; then
     # A virtual repository's own hooks are the client's: a versioned hook or a hooks
     # directory outside the repository is never written to, and no line is offered.
     if [ "$where" != own ]; then
@@ -1690,9 +1708,11 @@ print("own" if inside(hooks, common) else "versioned" if inside(hooks, root) els
   if [ "$where" != shared ]; then mkdir -p "$hooks" || exit 1; fi
   # In a versioned hook: one line at its end, which keeps the result of what ran before
   # it (it starts the check only after a success and ends with the status it found), and
-  # runs nothing of the repository unless this clone turned the check or the sync on.
+  # runs nothing unless this clone turned the check or the sync on; then the git
+  # directory's copy, never the working tree's (git runs a hook at the top of the working
+  # tree, so a relative git directory is found from there).
   # shellcheck disable=SC2016
-  line='caliber_rc=$?; if [ "$caliber_rc" -eq 0 ] && { [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" = true ] || [ "$(git config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ]; }; then caliber_hook="$(git rev-parse --show-toplevel)/.caliber/hooks/pre-push"; [ ! -x "$caliber_hook" ] || "$caliber_hook" "$@" || true; fi; (exit "$caliber_rc") '"$MARK"
+  line='caliber_rc=$?; if [ "$caliber_rc" -eq 0 ] && { [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" = true ] || [ "$(git config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ]; }; then caliber_hook="$(git rev-parse --git-common-dir)/caliber/hooks/pre-push"; if [ -x "$caliber_hook" ]; then "$caliber_hook" "$@" || true; else echo "Caliber: this hook ran no check or sync: this clone has no copy of Caliber'"'"'s hook in its git directory (run /caliber:setup again)" >&2; fi; fi; (exit "$caliber_rc") '"$MARK"
   state=$(CALIBER_LINE=$line keep "$hook" "$MARK" "$where") || exit 1
   case "$state" in
     created) say "the check on push was added: $hook" ;;
@@ -1752,6 +1772,26 @@ if [ "$(git config --local --type=bool --get caliber.syncActivity 2>/dev/null)" 
     || [ ! -x "$common/caliber/hooks/pre-push" ] || sync_on=1
 fi
 [ -n "$check_on$sync_on" ] || exit 0
+# A clone set up before version 17 runs this file from the working tree, which the branch
+# checked out can change: --install once more makes its git hook run the git directory's
+# copy. That copy says when the repository's hooks are newer than it (read, never run).
+if [ -n "$check_on" ] && [ -z "$sync_on" ]; then
+  tree=$(cd "$root" 2>/dev/null && pwd -P) || tree=""
+  copy=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)/caliber/hooks
+  version() { sed -n '2{s/.*caliber-hooks-version: \([0-9][0-9]*\).*/\1/p;q;}' "$1" 2>/dev/null; }
+  case "$here/" in
+    "$copy/")
+      mine=$(version "$0")
+      theirs=$(version "$root/.caliber/hooks/pre-push")
+      if [ -n "$mine" ] && [ -n "$theirs" ] && [ "$theirs" -gt "$mine" ] 2>/dev/null; then
+        say "this clone runs Caliber's hooks version $mine from its git directory, and the repository has version $theirs: run .caliber/hooks/pre-push --install to use them"
+      fi
+      ;;
+    "$tree/"*)
+      say "this clone's git hook runs the working tree's copy of this file, which the branch checked out can change: run .caliber/hooks/pre-push --install once more, so it runs a copy in the git directory"
+      ;;
+  esac
+fi
 remote=${1:-origin}
 if [ -t 0 ]; then refs=""; else refs=$(cat); fi
 

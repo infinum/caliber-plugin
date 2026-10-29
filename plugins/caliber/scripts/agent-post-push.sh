@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 16
+# Caliber check on push: the agent session hook. caliber-hooks-version: 17
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # An agent's hook runs this after each shell command:  agent-post-push.sh <agent>
@@ -30,9 +30,10 @@
 # hour (pre-push --sync --session: the plugin's own copy beside this file, else the copy
 # the install put in <git common dir>/caliber/hooks/, never a file of the client's working
 # tree), and offers no setup. After a successful `git push` an agent ran there, when the
-# clone's git hook has no Caliber line (the plugin's session route, or a hooks directory
-# the repository versions or shares), it starts that same sync, detached and silent: one
-# run per push, as the git hook's would be.
+# clone's git hook does not start it (no Caliber line that runs the git directory's copy:
+# the plugin's session route, or a hooks directory the repository versions or shares), it
+# starts that same sync with the commits the push named, detached and silent: one run per
+# push, as the git hook's would be.
 #
 #   git config --local caliber.checkInSession false    turn it off for this clone
 
@@ -53,13 +54,15 @@ if [ "${2:-}" = "plugin" ]; then
     caliber_repo=""
     if [ -z "$session" ]; then
       # A clone of a virtual repository: after an agent's push, its sync (below), unless
-      # the clone's git hook starts it: the Caliber line, and the git directory's copy it runs.
+      # the clone's git hook starts it: a Caliber line that runs the git directory's copy (the
+      # wrapper, or the line of version 17 on; an older line runs the working tree's), and
+      # that copy.
       [ "$(git -C "$top" config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ] || exit 0
       hook=$(git -C "$top" rev-parse --git-path hooks/pre-push 2>/dev/null) || exit 0
       case "$hook" in /*) ;; *) hook="$top/$hook" ;; esac
       gitdir=$(cd "$top" && cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || gitdir=""
-      if grep -qsF '# caliber:check-on-push' "$hook" && [ -n "$gitdir" ] \
-          && [ -x "$gitdir/caliber/hooks/pre-push" ]; then
+      if grep -qsF '# caliber:check-on-push' "$hook" && grep -qsF '/caliber/hooks/pre-push"' "$hook" \
+          && [ -n "$gitdir" ] && [ -x "$gitdir/caliber/hooks/pre-push" ]; then
         exit 0
       fi
       sync_push=1
@@ -181,6 +184,17 @@ def tag_refspec(spec):
     return (spec or "").rpartition(":")[2].startswith("refs/tags/")
 
 
+def this_directory(paths):
+    """Whether `git -C <path>...` (each relative to the one before) names this directory
+    or the top of this clone: `git -C . push` pushes from here."""
+    base = os.getcwd()
+    for path in paths:
+        if path is None:
+            return False                       # an expansion: not known here
+        base = os.path.join(base, path)
+    return os.path.realpath(base) in (os.path.realpath(os.getcwd()), os.path.realpath(ROOT))
+
+
 def clone_slug():
     """This clone\x27s own `caliber.project`, when it is a slug."""
     value = os.environ.get("CALIBER_HOOK_PROJECT") or ""
@@ -278,11 +292,91 @@ if not isinstance(command, str):
 # The command as the shell reads it, in one pass (time in proportion to its length; at
 # most the first 200 kB are read): words of simple commands, with quoted text taken as
 # its words, here-document bodies and comments skipped, redirections dropped. A word
-# with an expansion ($x, $(...), backticks) is None: its value is not known here.
+# with an expansion ($x, $(...), backticks) is None: its value is not known here. A
+# command substitution is skipped as the shell reads it, inside double quotes too: its
+# own quotes and here-documents (a commit message written with `"$(cat <<\x27EOF\x27 ...)"`)
+# end nothing outside it.
 src, n = command[:200000], min(len(command), 200000)
 commands, words, word = [], [], []
 has_word = unknown = redirect = False
 depth, pending, i = 0, [], 0
+
+
+def here_document(j):
+    """The here-document whose `<<` is at j: (its delimiter, whether tabs are stripped, the
+    index after the delimiter word)."""
+    j += 2
+    tabs = j < n and src[j] == "-"
+    j += 1 if tabs else 0
+    while j < n and src[j] in " \t":
+        j += 1
+    k = j
+    while k < n and src[k] not in " \t\n;&|<>()":
+        k += 1
+    return src[j:k].replace("\x27", "").replace("\x22", "").replace("\\", ""), tabs, k
+
+
+def skip_bodies(j, documents):
+    """The index after the bodies of these here-documents, which start at j."""
+    for delimiter, tabs in documents:
+        while j < n:
+            k = src.find("\n", j)
+            k = n if k < 0 else k
+            line = src[j:k]
+            j = k + 1
+            if (line.lstrip("\t") if tabs else line) == delimiter:
+                break
+    return j
+
+
+def close_quote(j, nested=0):
+    """The index of the `"` that ends the double-quoted text starting at j (n: none)."""
+    while j < n and src[j] != "\x22":
+        if src[j] == "\\":
+            j += 2
+        elif src.startswith("$(", j):
+            j = close_substitution(j + 2, nested + 1)
+        elif src[j] == "`":
+            k = src.find("`", j + 1)
+            j = n if k < 0 else k + 1
+        else:
+            j += 1
+    return min(j, n)
+
+
+def close_substitution(j, nested=1):
+    """The index after the `)` that ends the command substitution whose text starts at j
+    (n: none): quotes, here-documents and nested substitutions in it are its own."""
+    if nested > 50:
+        return n
+    level, documents = 1, []
+    while j < n:
+        c = src[j]
+        if c == "\\":
+            j += 2
+        elif c == "\x27":
+            k = src.find("\x27", j + 1)
+            j = n if k < 0 else k + 1
+        elif c == "\x22":
+            j = close_quote(j + 1, nested) + 1
+        elif c == "`":
+            k = src.find("`", j + 1)
+            j = n if k < 0 else k + 1
+        elif src.startswith("$(", j):
+            j = close_substitution(j + 2, nested + 1)
+        elif src.startswith("<<", j) and not src.startswith("<<<", j):
+            delimiter, tabs, j = here_document(j)
+            if delimiter:
+                documents.append((delimiter, tabs))
+        elif c == "\n":
+            j, documents = skip_bodies(j + 1, documents), []
+        else:
+            level += c == "("
+            level -= c == ")"
+            j += 1
+            if level == 0:
+                return j
+    return n
 
 
 def end_word():
@@ -317,7 +411,14 @@ while i < n:
                 word.append(src[j + 1])
                 j += 2
                 continue
-            if src[j] in "$`":
+            if src.startswith("$(", j):
+                unknown, j = True, close_substitution(j + 2)
+                continue
+            if src[j] == "`":
+                k = src.find("`", j + 1)
+                unknown, j = True, (n if k < 0 else k + 1)
+                continue
+            if src[j] == "$":
                 unknown = True
             word.append(src[j])
             j += 1
@@ -331,16 +432,7 @@ while i < n:
         j = src.find("`", i + 1)
         has_word, unknown, i = True, True, (n if j < 0 else j + 1)
     elif c == "$" and src.startswith("$(", i):
-        level, j = 0, i + 1
-        while j < n:
-            if src[j] == "(":
-                level += 1
-            elif src[j] == ")":
-                level -= 1
-                if level == 0:
-                    break
-            j += 1
-        has_word, unknown, i = True, True, j + 1
+        has_word, unknown, i = True, True, close_substitution(i + 2)
     elif c == "$":
         word.append(c)
         has_word, unknown, i = True, True, i + 1
@@ -352,30 +444,12 @@ while i < n:
         i += 1
     elif c == "\n":
         end_command()
-        i += 1
-        for delimiter, tabs in pending:          # here-document bodies, in order
-            while i < n:
-                j = src.find("\n", i)
-                j = n if j < 0 else j
-                line = src[i:j]
-                i = j + 1
-                if (line.lstrip("\t") if tabs else line) == delimiter:
-                    break
-        pending = []
+        i, pending = skip_bodies(i + 1, pending), []   # here-document bodies, in order
     elif src.startswith("<<", i) and not src.startswith("<<<", i):
         end_word()
-        j = i + 2
-        tabs = j < n and src[j] == "-"
-        j += 1 if tabs else 0
-        while j < n and src[j] in " \t":
-            j += 1
-        k = j
-        while k < n and src[k] not in " \t\n;&|<>()":
-            k += 1
-        delimiter = src[j:k].replace("\x27", "").replace("\x22", "").replace("\\", "")
+        delimiter, tabs, i = here_document(i)
         if delimiter:
             pending.append((delimiter, tabs))
-        i = k
     elif c in "<>":
         if has_word and "".join(word).isdigit() and not unknown:
             word, has_word = [], False           # the 2 of 2>
@@ -399,10 +473,11 @@ end_command()
 WRAPPERS = {"then", "do", "else", "elif", "if", "while", "until", "time", "command",
             "nohup", "exec", "sudo", "!"}
 WHERE = {"GIT_DIR", "GIT_WORK_TREE"}
-pushed = opened = elsewhere = unnamed = deleted = False
+pushed = opened = elsewhere = unnamed = deleted = tagged = False
 moved, exported = set(), False         # a cd at these subshell depths; export GIT_DIR=...
 target = None                          # the branch a push names, when it names one
 remote = None                          # the remote it names
+sources = []                           # what it sends, for the sync: local refs, or "*"
 for level, words in commands:
     moved = {m for m in moved if m <= level}
     k, assigned, env_moved = 0, set(), False
@@ -440,14 +515,17 @@ for level, words in commands:
             w and w.split("=", 1)[0] in WHERE for w in rest))
         continue
     if name == "git":
-        j, here = 0, False
+        j, here, chdir = 0, False, []
         while j < len(rest) and rest[j] and rest[j].startswith("-"):
             option = rest[j]
             j += 1
+            if option == "-C" and j < len(rest):
+                chdir.append(rest[j])
             if option in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") and j < len(rest):
                 j += 1
-            here = here or option in ("-C", "--git-dir", "--work-tree") \
+            here = here or option in ("--git-dir", "--work-tree") \
                 or option.startswith(("--git-dir=", "--work-tree="))
+        here = here or bool(chdir) and not this_directory(chdir)
         if j >= len(rest) or rest[j] != "push":
             continue
         args = rest[j + 1:]
@@ -473,8 +551,20 @@ for level, words in commands:
         pushed = True
         elsewhere = here or env_moved or bool(moved) or exported or bool(assigned & WHERE)
         unnamed = unnamed or any(a in ("--all", "--mirror", "--branches") for a in args)
+        tagged = "--tags" in args
         remote = positional[0] if positional else None
         refspecs = positional[1:]
+        # The local refs it sends, which the sync is handed as commits: a branch outside the
+        # clone\x27s fetch refspec (a --single-branch clone) gets no remote-tracking ref.
+        if any(a in ("--all", "--mirror", "--branches") for a in args):
+            sources = ["*"]
+        elif not refspecs and not tagged:
+            sources = ["HEAD"]
+        for spec in refspecs:
+            source, colon, dst = (spec or "").lstrip("+").rpartition(":")
+            source = source if colon else dst
+            if source and not tag_refspec(spec) and not source.startswith("refs/tags/"):
+                sources.append("HEAD" if source == "@" else source)
         if len(refspecs) > 1 or None in refspecs:
             unnamed = True
         elif refspecs:
@@ -496,8 +586,8 @@ for level, words in commands:
             "POST" in rest or any(w in ("-d", "--data", "--json") or (w or "").startswith(
                 ("-XPOST", "--data=", "--request=POST")) for w in rest)):
         opened = True
-if deleted and not opened:
-    sys.exit(0)
+if deleted and not opened and not (tagged and os.environ.get("CALIBER_HOOK_SYNC_PUSH")):
+    sys.exit(0)                # a deletion; with --tags still a release for the sync
 if not (pushed or opened):
     sys.exit(0)
 current = os.environ.get("CALIBER_HOOK_BRANCH") or ""
@@ -523,12 +613,18 @@ if re.search(r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote re
              output) or "Everything up-to-date" in output:
     sys.exit(0)
 
-# A clone of a virtual repository: no check, only the remote for its sync, of a push made
-# here (a push in another directory may be another repository\x27s).
+# A clone of a virtual repository: no check, only the remote for its sync of a push made
+# here (a push in another directory may be another repository\x27s), then the local refs
+# it sent, one a line: a plain ref name each (no option, no pattern), or "*" for every
+# local branch.
 if os.environ.get("CALIBER_HOOK_SYNC_PUSH"):
     if pushed and not elsewhere:
         print(remote if remote and re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", remote)
               else "origin")
+        for ref in dict.fromkeys(sources):
+            if ref == "*" or (re.match(r"^[A-Za-z0-9][A-Za-z0-9._/@+-]{0,254}$", ref or "")
+                              and ".." not in ref and "@{" not in ref):
+                print(ref)
     sys.exit(0)
 
 branch = "" if elsewhere or unnamed else elsewhere_branch or current
@@ -627,15 +723,30 @@ if [ -n "${sync_push:-}" ]; then
   syncer="$beside/pre-push"
   if [ -z "$beside" ] || [ ! -x "$syncer" ]; then syncer="$common/caliber/hooks/pre-push"; fi
   [ -x "$syncer" ] || exit 0
-  remote=$(printf '%s' "$input" | CALIBER_HOOK_SYNC_PUSH=1 CALIBER_HOOK_ROOT=$top \
+  pushed=$(printf '%s' "$input" | CALIBER_HOOK_SYNC_PUSH=1 CALIBER_HOOK_ROOT=$top \
     python3 -I -c "$program" "$agent") || exit 0
+  remote=$(printf '%s\n' "$pushed" | sed -n 1p)
   [ -n "$remote" ] || exit 0
+  # The commits the push sent, as the git hook hands them over: the local refs it named
+  # (plain names, checked above), each resolved here; "*" is every local branch.
+  shas=""
+  for ref in $(printf '%s\n' "$pushed" | sed 1d); do
+    if [ "$ref" = "*" ]; then
+      found=$(git -C "$top" for-each-ref --format='%(objectname)' refs/heads/ 2>/dev/null) || found=""
+    else
+      found=$(git -C "$top" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || found=""
+    fi
+    for sha in $found; do
+      case "$sha" in *[!0-9a-f]* | "") ;; *) shas="$shas $sha" ;; esac
+    done
+  done
+  # shellcheck disable=SC2086 # the pushed shas: one word each
   (cd "$top" && nohup python3 -I -c 'import os, sys
 try:
     os.setsid()
 except OSError:
     pass
-os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync "$remote" \
+os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync "$remote" $shas \
     </dev/null >/dev/null 2>&1 &)
   exit 0
 fi
@@ -644,8 +755,8 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 project=$(git -C "$top" config --local --get caliber.project 2>/dev/null) || project=""
 
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
-# The background check of this branch is running (the git hook started it for this
-# very push): one check per push. Whether the push was of this branch at all, the
+# The background check of this branch's head is running (the git hook started it for
+# this very push): one check per push. Whether the push was of this branch at all, the
 # script below decides from the command.
 running=""
 if [ -n "$branch" ]; then
@@ -656,8 +767,11 @@ if [ -n "$branch" ]; then
   fi
   lock="$common/caliber/check-$name.pid"
   if [ -n "$common" ] && [ -f "$lock" ]; then
-    read -r pid _ <"$lock" 2>/dev/null || pid=""
+    read -r pid lock_sha _ <"$lock" 2>/dev/null || pid=""
     case "$pid" in '' | *[!0-9]*) pid="" ;; esac
+    # Of this very push: the lock names the commit it checks ("<pid> <sha>"). A run of an
+    # earlier push (from a terminal, while this session's push started none) is not.
+    [ "${lock_sha:-}" = "$(git rev-parse --verify --quiet HEAD 2>/dev/null)" ] || pid=""
     # Alive, and still the runner (a pid is reused after a crash or a restart).
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       if [ -r "/proc/$pid/cmdline" ]; then
