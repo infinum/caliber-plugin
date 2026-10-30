@@ -92,7 +92,7 @@ Nothing is written without your answer.
 | `/caliber:describe-specs` | Propose one-line descriptions for specs that have none, and save the ones you agree to |
 | `/caliber:status` | The project's status and the next step |
 | `/caliber:setup` | Set up this repository for Caliber, then your own usage (`/caliber:setup-usage`) |
-| `/caliber:setup-usage` | Set up your own usage: a client repository's commit sync (the last 30 days at once) and your agents' telemetry |
+| `/caliber:setup-usage [project-slug]` | Set up your own usage: a client repository's commit sync (the last 30 days at once) and your agents' telemetry |
 | `/caliber:projects` | The projects you can use, this clone's marked, and the instance |
 | `/caliber:project [slug\|--unset]` | Show, set or clear this clone's project (`caliber.project`) |
 
