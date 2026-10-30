@@ -92,7 +92,7 @@ Nothing is written without your answer.
 | `/caliber:describe-specs` | Propose one-line descriptions for specs that have none, and save the ones you agree to |
 | `/caliber:status` | The project's status and the next step |
 | `/caliber:setup` | Set up this repository for Caliber, then your own usage (`/caliber:setup-usage`) |
-| `/caliber:setup-usage` | Set up your own usage: a client repository's commit sync (the last 30 days at once) and your agents' telemetry |
+| `/caliber:setup-usage [project-slug]` | Set up your own usage: a client repository's commit sync (the last 30 days at once) and your agents' telemetry |
 | `/caliber:projects` | The projects you can use, this clone's marked, and the instance |
 | `/caliber:project [slug\|--unset]` | Show, set or clear this clone's project (`caliber.project`) |
 
@@ -120,12 +120,14 @@ A release is one commit that bumps `version` in `plugins/caliber/.claude-plugin/
 `plugin_version` that `plugins/caliber/commands/status.md`, `setup.md` and `setup-usage.md` pass, together. The
 server address never changes between releases, so installed copies keep their sign-in after `/plugin update`.
 
-`plugins/caliber/scripts/agent-post-push.sh` and `plugins/caliber/scripts/pre-push` are byte-identical copies
-of the server's `backend/app/services/caliber/hooks/` files of the same names in `infinum/caliber`, of one hooks
-version. When the server's scripts change, copy both and record each `<hooks version> <sha256> [<file>]` in
-`scripts/server-hooks.sha256` (a line without a file name is `agent-post-push.sh`'s): new lines for a new hooks
-version; a line is fixed once its hooks version is released. The session hook starts a virtual clone's commit
-sync with the plugin's own `pre-push`, so `/caliber:setup-usage` installs no git hook there (from 1.4.0).
+`plugins/caliber/scripts/` holds byte-identical copies of the server's four hook files
+(`backend/app/services/caliber/hooks/` in `infinum/caliber`: `agent-post-push.sh`, `pre-push`, `sync.py` and
+`check-on-push.sh`), of one hooks version. When the server's scripts change, copy all four and record each
+`<hooks version> <sha256> [<file>]` in `scripts/server-hooks.sha256` (a line without a file name is
+`agent-post-push.sh`'s): new lines for a new hooks version; a line is fixed once its hooks version is released.
+The session hook starts a virtual clone's commit sync with the plugin's own `pre-push` (from 1.4.0), and from
+1.8.0 `/caliber:setup` and `/caliber:setup-usage` copy these files when their sha256 is the server's, instead of
+fetching them one by one.
 
 CI has no checkout of the server, so it compares the copy with the pinned sha256 only: it cannot see the
 server's script change under the same hooks version. Before every release, run `check-release.sh` by hand with

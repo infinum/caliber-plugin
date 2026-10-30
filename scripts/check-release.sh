@@ -3,8 +3,8 @@
 #   - plugin.json's version equals the plugin_version that commands/status.md, setup.md and setup-usage.md
 #     pass, and the two setup commands name the plugin's sync script;
 #   - .mcp.json's server has no headers (they are part of the sign-in's key) and its URL is .../mcp/plugin;
-#   - scripts/agent-post-push.sh and scripts/pre-push are the server's files for their hooks version
-#     (scripts/server-hooks.sha256, and the files themselves when CALIBER_SERVER_DIR names a checkout of
+#   - scripts/agent-post-push.sh, pre-push, sync.py and check-on-push.sh are the server's files for their hooks
+#     version (scripts/server-hooks.sha256, and the files themselves when CALIBER_SERVER_DIR names a checkout of
 #     infinum/caliber), of one hooks version, and executable;
 #   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker after each Bash command, and
 #     with `claude plugin session` at the start of a session;
@@ -69,9 +69,9 @@ sys.exit(1 if bad else 0)
 PY
 
 # 3. The hook scripts: the server's, byte for byte, of one hooks version. A pin line without a file name is
-#    agent-post-push.sh's.
+#    agent-post-push.sh's. From hooks version 18 the plugin ships all four (setup copies them).
 hooks_version=""
-for name in agent-post-push.sh pre-push; do
+for name in agent-post-push.sh pre-push sync.py check-on-push.sh; do
   hook="$plugin/scripts/$name"
   if [ ! -f "$hook" ]; then
     fail "scripts/$name is missing"
