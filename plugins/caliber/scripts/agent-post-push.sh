@@ -583,8 +583,15 @@ if isinstance(result, dict):
     if result.get("error") or result.get("interrupted") is True:
         sys.exit(0)
 output = text_of(result)
-# A ref updated by any push of the command counts.
-updated = re.search(r"(?m)^\s*(?:\*|\+|[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,})\s.*\S -> \S", output)
+# A ref updated by any push of the command counts. The lines of a fetch (after From <url>,
+# as in git pull --rebase && git push) have the same shape and do not.
+updated, fetched = False, False
+for line in output.splitlines():
+    if re.match(r"^(From|To)\s", line):
+        fetched = line.startswith("From")
+    elif not fetched and re.match(
+            r"^\s*(?:\*|\+|[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,})\s.*\S -> \S", line):
+        updated = True
 if not updated and (re.search(
         r"(?m)^\s*(?:fatal:|error: failed to push|! \[(?:rejected|remote rejected)\])", output)
         or "Everything up-to-date" in output):
