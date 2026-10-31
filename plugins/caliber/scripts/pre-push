@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 18
+# Caliber check on push: the git hook. caliber-hooks-version: 19
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, after the hook that was there. It never blocks, delays or
@@ -436,11 +436,13 @@ print("own" if inside(hooks, common) else "versioned" if inside(hooks, root) els
   # shellcheck disable=SC2016
   line='caliber_rc=$?; if [ "$caliber_rc" -eq 0 ] && { [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" = true ] || [ "$(git config --local --type=bool --get caliber.syncActivity 2>/dev/null)" = true ]; }; then caliber_hook="$(git rev-parse --git-common-dir)/caliber/hooks/pre-push"; if [ -x "$caliber_hook" ]; then "$caliber_hook" "$@" || true; else echo "Caliber: this hook ran no check or sync: this clone has no copy of Caliber'"'"'s hook in its git directory (run /caliber:setup again)" >&2; fi; fi; (exit "$caliber_rc") '"$MARK"
   state=$(CALIBER_LINE=$line keep "$hook" "$MARK" "$where") || exit 1
+  # A virtual clone's hook starts the sync alone.
+  what="the check"; [ -z "$virtual" ] || what="the sync"
   case "$state" in
-    created) say "the check on push was added: $hook" ;;
-    wrapped) say "the check on push was added: $hook runs the hook that was there first (kept as pre-push.caliber-previous), then starts the check" ;;
+    created) say "$what on push was added: $hook" ;;
+    wrapped) say "$what on push was added: $hook runs the hook that was there first (kept as pre-push.caliber-previous), then starts $what" ;;
     added)
-      say "the check on push was added to $hook"
+      say "$what on push was added to $hook"
       # A hook switched off stays off: that was somebody's choice.
       [ -x "$hook" ] || say "that hook is not executable, so git does not run it (chmod +x turns it on)"
       ;;
