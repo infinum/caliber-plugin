@@ -3,7 +3,7 @@ description: "Set up your own usage for Caliber (a client repository's commit sy
 argument-hint: "[project-slug]"
 allowed-tools: mcp__plugin_caliber_caliber__setup-usage, mcp__plugin_caliber_caliber__projects, Bash(git config --local --get caliber.project), Read
 ---
-Call the Caliber tool `setup-usage` with `plugin_version` = "1.8.1" and `project` = the slug typed after the
+Call the Caliber tool `setup-usage` with `plugin_version` = "1.8.2" and `project` = the slug typed after the
 command, "$ARGUMENTS", when there is one; else the slug `git config --local --get caliber.project` prints (this
 clone's project), else the slug the Caliber block of this repository names (between `<!-- caliber:start` and
 `<!-- caliber:end -->` in CLAUDE.md or AGENTS.md). A value that is not a slug, of lower-case letters, digits

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 18
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 19
 # Written by /caliber:setup-usage. Do not edit: the next version replaces the file whole.
 # Run only by the `pre-push --sync` beside it (python3 -I), which decides whether this copy may
 # send the token and passes the trigger and state directory in the environment. Authors are
@@ -21,7 +21,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 18
+VERSION = 19
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -672,12 +672,18 @@ def named_pull_request(host, path, parents, message):
         if found and len(parents) == 1:
             return found.group(1), first[:found.start()], ""
     elif host == "gitlab.com" and len(parents) in (1, 2):
-        for found in re.finditer(r"^See merge request (\S+)!(\d{1,10})$", message, re.M):
-            if found.group(1).lower() == path.lower():
-                paragraphs = [p for p in re.split(r"\n[ \t]*\n", message.strip("\n")) if p.strip()]
-                title = paragraphs[1].split("\n", 1)[0].strip() if len(paragraphs) > 1 else ""
-                head = re.match(r"Merge branch '([^']+)' into ", first)
-                return found.group(2), title, head.group(1) if head else ""
+        # GitLab's `group/app!7`, or the URL some projects' templates write instead. The footer
+        # is the last such line, whatever it names: a description above it may name another.
+        footer = [*re.finditer(r"^See merge request\b(.*)$", message, re.M)][-1:]
+        found = footer and re.fullmatch(r"(?:https://gitlab\.com/(\S+)/-/merge_requests/|"
+                                        r"(\S+)!)(\d{1,10})", footer[0].group(1).strip())
+        if found and (found.group(1) or found.group(2)).lower() == path.lower():
+            head = re.match(r"Merge branch '([^']+)' into ", first)
+            # A merge commit's title is the paragraph after its header; a squash's, its subject.
+            paragraphs = [p for p in re.split(r"\n[ \t]*\n", message.strip("\n")) if p.strip()]
+            title = first.strip() if not head else (
+                paragraphs[1].split("\n", 1)[0].strip() if len(paragraphs) > 1 else "")
+            return found.group(3), title, head.group(1) if head else ""
     elif host == "bitbucket.org" and len(parents) in (1, 2):
         found = re.match(r"Merged in (\S+) \(pull request #(\d{1,10})\)", first)
         if found:

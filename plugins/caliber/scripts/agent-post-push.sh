@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 18
+# Caliber check on push: the agent session hook. caliber-hooks-version: 19
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
