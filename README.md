@@ -10,8 +10,8 @@ Code tab and Cowork:
   `/caliber:audit`, `/caliber:code-audit`, `/caliber:security-audit`, `/caliber:describe-specs`,
   `/caliber:status`, `/caliber:setup` and `/caliber:setup-usage`, plus `/caliber:projects` and `/caliber:project` to see and choose
   this clone's project.
-- **The session hooks**: at the start of a session in a repository set up for Caliber, one line names the
-  project, where it comes from and the Caliber instance; in a clone of a project's repository that has no
+- **The session hooks**: at the start of a session in a repository set up for Caliber, Claude is handed one line
+  naming the project, where it comes from and the Caliber instance; in a clone of a project's repository that has no
   Caliber block, the line instead has Claude offer the setup once (Yes, recommended; Not now; Don't ask again); after the
   agent's own `git push` (or a pull request it opens from the command line), Claude runs the Caliber check in
   the same session; and before each audit or spec verdict it sends, a stamp of who sent it (a subagent or the
@@ -66,7 +66,7 @@ stored on the server. Use it in a repository that cannot carry a block, in a mon
 before setup. `/caliber:project --unset` (or `git config --local --unset caliber.project`) goes back to the
 block. With neither, a command uses your only project, or lists the projects you can see and asks which one.
 
-A session in a repository set up for Caliber starts with one line such as
+A session in a repository set up for Caliber starts with one line of context for Claude (not shown to you) such as
 ``Caliber: project `checkout` (the Caliber block) · app.caliberhq.io``: the project, where it comes from
 (this clone's `caliber.project`, the block, or a warning when the two name different projects) and the
 instance the plugin talks to. `/caliber:status` starts with the same.
