@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 21
+# Caliber check on push: the agent session hook. caliber-hooks-version: 22
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -12,7 +12,10 @@
 # At a session start,  agent-post-push.sh claude plugin session  hands the agent one line:
 # the project, its source and the Caliber host. Without a project the line has the agent
 # offer the setup once, when a project lists the origin (shown without userinfo); never
-# with caliber.askSetup false, on a resume or a compaction.
+# with caliber.askSetup false, on a resume or a compaction. Beside the project line, the
+# plugin's version against the ones Caliber serves (/mcp/plugin/versions, read at most once a
+# day, kept in ~/.cache/caliber): below the minimum the agent uses no Caliber tool until the
+# person updates, below the recommended one it suggests the update, at most once a day.
 # python3 runs with -I, so a module planted at the repository's root never runs.
 #
 # In a virtual repository's clone (caliber.syncActivity, a sync token) a session start
@@ -59,7 +62,9 @@ import json
 import os
 import re
 import sys
+import time
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 agent = sys.argv[1]
 ROOT = os.environ.get("CALIBER_HOOK_ROOT") or "."
@@ -185,6 +190,92 @@ def clone_slug():
     return value if SLUG.fullmatch(value) else None
 
 
+# The plugin against the versions Caliber serves (brief plugin-version-check).
+VERSIONS_EVERY = 86400
+UPDATE = ("update with `/plugin` \u2192 Installed \u2192 caliber \u2192 Update now, then "
+          "`/reload-plugins` (or `claude plugin update caliber@caliber` in a shell)")
+AUTO = ("; to get updates without asking, `/plugin` \u2192 Marketplaces \u2192 caliber "
+        "\u2192 Enable auto-update")
+
+
+def version_of(text):
+    """x.y.z as three numbers; None for anything else."""
+    found = re.fullmatch(r"(\d{1,6})\.(\d{1,6})\.(\d{1,6})", text if isinstance(text, str) else "")
+    return tuple(int(part) for part in found.groups()) if found else None
+
+
+def recent(value, now):
+    return isinstance(value, (int, float)) and 0 <= now - value < VERSIONS_EVERY
+
+
+def plugin_update_note(base):
+    """What the agent is told of this plugin against base/mcp/plugin/versions, asked at most
+    once a day per instance (tried_at) and used for a day after an answer (read_at), kept with
+    when the agent was last told; empty when current, unknown or not read for a day."""
+    root = os.environ.get("CALIBER_HOOK_PLUGIN_ROOT")
+    # The check run the push hook starts: nobody reads its session, so it is told nothing.
+    if not root or os.environ.get("CALIBER_PUSH_HOOK_RUN") == "1":
+        return ""
+    try:
+        with open(os.path.join(root, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            own = version_of(json.load(f).get("version"))
+    except (OSError, ValueError, AttributeError):
+        own = None
+    if own is None:
+        return ""
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    path = os.path.join(cache, "caliber", "plugin-versions.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {}
+    state = state if isinstance(state, dict) else {}
+    entry = state.get(base)
+    entry = entry if isinstance(entry, dict) else {}
+    now = time.time()
+    if not recent(entry.get("tried_at"), now):
+        entry["tried_at"] = now  # asked again tomorrow, also when Caliber does not answer
+        try:
+            request = Request(base + "/mcp/plugin/versions", headers={"Accept": "application/json"})
+            with urlopen(request, timeout=3) as res:
+                got = json.loads(res.read(4096))
+            if isinstance(got, dict) and version_of(got.get("minimum")) \
+                    and version_of(got.get("recommended")):
+                entry["minimum"], entry["recommended"] = got["minimum"], got["recommended"]
+                entry["read_at"] = now
+        except Exception:  # noqa: BLE001 - an old Caliber, offline, a timeout: the kept versions
+            pass
+    # Versions no answer confirmed for a day are not used: an old or unreachable Caliber
+    # stops the notes after a day.
+    fresh = recent(entry.get("read_at"), now)
+    minimum = version_of(entry.get("minimum")) if fresh else None
+    recommended = version_of(entry.get("recommended")) if fresh else None
+    shown = ".".join(str(part) for part in own)
+    note = ""
+    if minimum and own < minimum:
+        note = ("Caliber: the Caliber plugin " + shown + " is older than " + entry["minimum"]
+                + ", the oldest this Caliber serves. Before you use a Caliber tool, tell the "
+                "person, and use none until they have updated: " + UPDATE + ".")
+    elif recommended and own < recommended and not recent(entry.get("told_at"), now):
+        entry["told_at"] = now
+        note = ("Caliber: Caliber plugin " + entry["recommended"] + " is out; this one is "
+                + shown + ". In your first reply, tell the person once, in one line: " + UPDATE
+                + AUTO + ".")
+    state = {key: value for key, value in state.items() if key == base or recent(
+        value.get("tried_at") if isinstance(value, dict) else None, now)}
+    state[base] = entry
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        temporary = path + "." + str(os.getpid())
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(temporary, path)
+    except OSError:
+        pass
+    return note
+
+
 if os.environ.get("CALIBER_HOOK_SESSION"):  # a session start
     override = clone_slug()
     has_block, named = block()
@@ -225,6 +316,11 @@ if os.environ.get("CALIBER_HOOK_SESSION"):  # a session start
     if not host or not re.fullmatch(r"[a-z0-9.:-]{1,253}", host):
         host = "CALIBER_URL names no plain host"
     line = "Caliber: project `" + slug + "` (" + source + ") \u00b7 " + host
+    if host != "CALIBER_URL names no plain host":
+        parts = urlsplit(os.environ.get("CALIBER_URL") or "https://app.caliberhq.io")
+        if parts.scheme in ("http", "https"):
+            note = plugin_update_note(parts.scheme + "://" + parts.netloc)
+            line = line + ("\n" + note if note else "")
     # For the model alone: a systemMessage would be a warning banner in the Claude apps.
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                              "additionalContext": line}}))
@@ -681,9 +777,11 @@ os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync --session \
         </dev/null >/dev/null 2>&1 &)
     fi
   fi
+  # The plugin's own root, for its version (plugin.json).
+  plugin_root=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd -P) || plugin_root=""
   CALIBER_HOOK_SESSION=1 CALIBER_HOOK_ROOT=$top CALIBER_HOOK_PROJECT=$project \
     CALIBER_HOOK_CALIBER_REPO=$caliber_repo CALIBER_HOOK_ORIGIN=$origin CALIBER_HOOK_ASK=$ask \
-    CALIBER_HOOK_SYNC=$sync python3 -I -c "$program" "$agent"
+    CALIBER_HOOK_SYNC=$sync CALIBER_HOOK_PLUGIN_ROOT=$plugin_root python3 -I -c "$program" "$agent"
   exit 0
 fi
 

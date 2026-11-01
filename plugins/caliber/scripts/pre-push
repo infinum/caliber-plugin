@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 21
+# Caliber check on push: the git hook. caliber-hooks-version: 22
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, after the hook that was there. It never blocks, delays or
