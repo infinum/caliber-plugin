@@ -33,6 +33,10 @@ shows two copies.
 /plugin install caliber@caliber
 ```
 
+Installed in a session that was already running, the plugin's Caliber server is not loaded yet: run
+`/reload-plugins`, or start a new session, before `/caliber:setup` (from 1.8.8 the commands say so instead of
+using another Caliber connection you may have).
+
 Then sign in once: run `/mcp`, choose `plugin:caliber:caliber` and sign in with your Caliber account (or run
 `claude mcp login plugin:caliber:caliber` in a shell). Claude Code renews the sign-in from then on; the
 background check on push uses the same sign-in.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 22
+# Caliber check on push: the agent session hook. caliber-hooks-version: 23
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -62,6 +62,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -208,6 +209,36 @@ def recent(value, now):
     return isinstance(value, (int, float)) and 0 <= now - value < VERSIONS_EVERY
 
 
+def ask_versions(base):
+    """base/mcp/plugin/versions, or None; at most 4 seconds in all, the name lookup too (the
+    timeout of urlopen bounds the socket alone)."""
+    answer = {}
+
+    def ask():
+        try:
+            request = Request(base + "/mcp/plugin/versions", headers={"Accept": "application/json"})
+            with urlopen(request, timeout=3) as res:
+                answer["got"] = json.loads(res.read(4096))
+        except Exception:  # noqa: BLE001 - an old Caliber, offline, a timeout: the kept versions
+            pass
+
+    worker = threading.Thread(target=ask, daemon=True)
+    worker.start()
+    worker.join(4)
+    return answer.get("got")
+
+
+def keep_versions(path, state):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        temporary = path + "." + str(os.getpid())
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(temporary, path)
+    except OSError:
+        pass
+
+
 def plugin_update_note(base):
     """What the agent is told of this plugin against base/mcp/plugin/versions, asked at most
     once a day per instance (tried_at) and used for a day after an answer (read_at), kept with
@@ -236,16 +267,14 @@ def plugin_update_note(base):
     now = time.time()
     if not recent(entry.get("tried_at"), now):
         entry["tried_at"] = now  # asked again tomorrow, also when Caliber does not answer
-        try:
-            request = Request(base + "/mcp/plugin/versions", headers={"Accept": "application/json"})
-            with urlopen(request, timeout=3) as res:
-                got = json.loads(res.read(4096))
-            if isinstance(got, dict) and version_of(got.get("minimum")) \
-                    and version_of(got.get("recommended")):
-                entry["minimum"], entry["recommended"] = got["minimum"], got["recommended"]
-                entry["read_at"] = now
-        except Exception:  # noqa: BLE001 - an old Caliber, offline, a timeout: the kept versions
-            pass
+        # Kept before the request: a session hook stopped while it waits does not ask again.
+        state[base] = entry
+        keep_versions(path, state)
+        got = ask_versions(base)
+        if isinstance(got, dict) and version_of(got.get("minimum")) \
+                and version_of(got.get("recommended")):
+            entry["minimum"], entry["recommended"] = got["minimum"], got["recommended"]
+            entry["read_at"] = now
     # Versions no answer confirmed for a day are not used: an old or unreachable Caliber
     # stops the notes after a day.
     fresh = recent(entry.get("read_at"), now)
@@ -265,14 +294,7 @@ def plugin_update_note(base):
     state = {key: value for key, value in state.items() if key == base or recent(
         value.get("tried_at") if isinstance(value, dict) else None, now)}
     state[base] = entry
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        temporary = path + "." + str(os.getpid())
-        with open(temporary, "w", encoding="utf-8") as f:
-            json.dump(state, f)
-        os.replace(temporary, path)
-    except OSError:
-        pass
+    keep_versions(path, state)
     return note
 
 

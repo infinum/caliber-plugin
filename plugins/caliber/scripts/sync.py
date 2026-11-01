@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 22
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 23
 # Written by /caliber:setup-usage. Do not edit: the next version replaces the file whole.
 # Run only by the `pre-push --sync` beside it (python3 -I), which decides whether this copy may
 # send the token and passes the trigger and state directory in the environment. Authors are
@@ -21,11 +21,12 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 22
+VERSION = 23
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
 #: `--backfill`: the history from hello's `backfill_since`; done once `sync-backfill` exists.
+#: A first run whose window holds no commit reads the history at once (v23).
 BACKFILL = TRIGGER == "backfill"
 SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 PUSHED = [a for a in sys.argv[1:] if SHA.fullmatch(a)] if TRIGGER == "push" else []
@@ -401,6 +402,19 @@ def main():
     if BACKFILL and not since:
         log("no-backfill", hello=200)          # an older server
         return
+    # `history=1` (v23): Caliber holds the repository's history already, so a backfill sends
+    # nothing and is done, and a first run never widens to it.
+    there = (answer.get("history") or "").strip() == "1"
+    if BACKFILL and there:
+        if finish_empty(run_id):
+            history_done(since)
+            NOTES["note"] = "history-there"
+            log("ok", hello=200, status=200)
+        return
+    history_since = (answer.get("backfill_since") or "").strip()
+    history_since = history_since if re.fullmatch(r"\d{4}-\d{2}-\d{2}", history_since) \
+        else ""
+    backfill = BACKFILL
     host, path = key.split("/", 1)
     me = norm(own_email) if own_email else None
     login = own_login(host)
@@ -415,7 +429,7 @@ def main():
         return value.strip(SPACE) if login and value and norm(value) == norm(login) else ""
 
     # 5. Fetch; a failure sends what the clone has.
-    git("fetch", remote, "--no-tags", "--quiet", timeout=600)
+    fetched = git("fetch", remote, "--no-tags", "--quiet", timeout=600) is not None
 
     # 6. Commits past the saved tips; a failed read (None, not "") sends nothing.
     refs = git("for-each-ref", "--format=%(objectname)", f"refs/remotes/{remote}/")
@@ -434,8 +448,16 @@ def main():
     tips = [t for t in tips if t in commits_known]
     saved = [t for t in (read("sync-tips") or "").split()
              if SHA.fullmatch(t) and t in commits_known]
-    cut = [] if FULL or BACKFILL else saved
-    window_since = since if BACKFILL or ((first or not saved) and not FULL) else ""
+    cut = [] if FULL or backfill else saved
+    window_since = since if backfill or ((first or not saved) and not FULL) else ""
+    # A first window with no commit: the history at once, as `--backfill` reads it (v23).
+    if window_since and not backfill and not there and history_since and tips:
+        count = git("rev-list", "--count", "--no-merges", f"--since={window_since}", *tips,
+                    "--")
+        if (count or "").strip() == "0":
+            backfill, since = True, history_since
+            window_since = since
+            NOTES["note"] = "history-at-once"
     rangeargs = list(tips)
     if cut:
         rangeargs += ["--not", *cut]
@@ -509,7 +531,7 @@ def main():
     tags_kept = None
     if SHA.fullmatch(default_tip):
         found = tag_groups(remote, default_tip,
-                           since if (BACKFILL or read("sync-tags") is None) and not FULL
+                           since if (backfill or read("sync-tags") is None) and not FULL
                            else "")
         if found is None:
             NOTES["note"] = "tags-failed"
@@ -519,15 +541,20 @@ def main():
             counts["tags"] = len(tag_lines)
 
     # 7. Pull requests since the window, oldest first; only with `cli`.
-    window_file = "sync-backfill-window" if BACKFILL else "sync-window"
+    window_file = "sync-backfill-window" if backfill else "sync-window"
     window = (read(window_file) or "").strip() or None
     start = None if FULL else (window or since or None)
-    limit_pages = BACKFILL_PAGES if BACKFILL else PAGES
+    limit_pages = BACKFILL_PAGES if backfill else PAGES
     pages = []
     PAGING["done"] = True
+    # Whether another clone could read more pull requests than this one: the CLI is allowed for
+    # a host it reads, and this machine has none of it.
+    cli_host = CLI["on"] and host in ("github.com", "gitlab.com")
+    read_prs = False
     if not CLI["on"]:
         pass
     elif host == "github.com" and shutil.which("gh"):
+        read_prs = True
         PAGING["done"] = False
         pages = github_pages(f"{host}/{path}", start, text, limit_pages)
         for rows, after in zip(pages, PAGING["after"]):
@@ -535,6 +562,7 @@ def main():
                 last = index == len(rows) - 1
                 groups.append((github_lines(pr, text, clear_login), after if last else None))
     elif host == "gitlab.com" and shutil.which("glab") and shutil.which("jq"):
+        read_prs = True
         PAGING["done"] = False
         pages = gitlab_pages(path, start, text, limit_pages)
         for rows, after in zip(pages, PAGING["after"]):
@@ -542,6 +570,12 @@ def main():
                 last = index == len(rows) - 1
                 groups.append((gitlab_lines(path, mr, text, clear_login), after if last else None))
     counts["prs"] = sum(len(rows) for rows in pages)
+
+    # The whole history, as any clone could send it (fetched now, not shallow or partial, pull
+    # requests read where the CLI may read them): Caliber keeps it, and another clone's backfill
+    # that `hello` answers `history=1` sends nothing (v23).
+    complete = backfill and fetched and PAGING["done"] and tags_kept is not None \
+        and not partial and not shallow and (read_prs or not cli_host)
 
     # 8. Send in parts.
     parts = deque(pack(groups, limit))
@@ -557,7 +591,8 @@ def main():
             log("too-many", hello=200)
             return
         status, reply = post(f"/caliber/sync/activity?run={urllib.parse.quote(run_id)}"
-                             f"&last={1 if last else 0}", body,
+                             f"&last={1 if last else 0}"
+                             f"{'&history=1' if last and complete else ''}", body,
                              "text/tab-separated-values; charset=utf-8")
         reason = reply.strip().split()[0] if reply.strip() else ""
         if status == 200:
@@ -586,16 +621,36 @@ def main():
     save("sync-tips", "".join(t + "\n" for t in tips))
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
-    if BACKFILL:
+    if backfill:
         if PAGING["done"] and tags_kept is not None:
-            save("sync-backfill", since + "\n")
-            try:
-                os.remove(where("sync-backfill-window"))
-            except OSError:
-                pass
+            history_done(since)
         else:
             NOTES["note"] = "backfill-partial"   # the next --backfill goes on
+    elif there and history_since:
+        history_done(history_since)              # another clone sent it: no backfill here
+        NOTES["note"] = "history-there"
     log("ok", hello=200, status=200)
+
+
+def history_done(since):
+    """The clone's history is in Caliber: setup-usage starts no backfill."""
+    save("sync-backfill", since + "\n")
+    try:
+        os.remove(where("sync-backfill-window"))
+    except OSError:
+        pass
+
+
+def finish_empty(run_id):
+    """Ends a run that sends nothing with one empty last part; False (logged) when refused."""
+    status, reply = post(f"/caliber/sync/activity?run={urllib.parse.quote(run_id)}&last=1", b"",
+                         "text/tab-separated-values; charset=utf-8")
+    if status != 200:
+        reason = reply.strip().split()[0] if reply.strip() else ""
+        log("refused", hello=200, status=status, reason=re.sub(r"[^a-z-]", "", reason)[:20])
+        return False
+    counts["parts"] += 1
+    return True
 
 
 def read_shallow():
