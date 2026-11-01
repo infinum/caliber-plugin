@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Caliber check on push: the runner. caliber-hooks-version: 19
+# Caliber check on push: the runner. caliber-hooks-version: 20
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Started detached by .caliber/hooks/pre-push:  check-on-push.sh <branch> <sha> [remote]
@@ -762,6 +762,7 @@ ONLY_GIT="${CALIBER_TMP}/bin/only-caliber-git"
   fi
   cat << 'ONLY_GIT'
 import json
+import os
 import re
 import sys
 
@@ -782,6 +783,19 @@ if MCP_TOOLS is not None and isinstance(tool, str) and tool.startswith("mcp__") 
         and tool not in MCP_TOOLS:
     sys.stderr.write("Only the Caliber check's tools may be called here.\n")
     sys.exit(2)
+# This run's audits and verdicts are stamped as the push hook's own run, whatever the agent
+# put in `invoker` (brief assure-independent-checks-stamp; stamp-invoker.py does the same).
+if isinstance(tool, str) and re.fullmatch(r"mcp__[a-z_]+__(submit_audit|verify_spec)", tool) \
+        and isinstance(data.get("tool_input"), dict):
+    version = os.environ.get("CLAUDE_CODE_VERSION", "").strip()
+    stamp = {"harness": f"claude-code/{version}" if version else "claude-code",
+             "agent_type": "caliber-push-hook"}
+    if isinstance(data.get("session_id"), str) and data["session_id"].strip():
+        stamp["session_id"] = data["session_id"].strip()
+    stamp = {key: value[:128] for key, value in stamp.items()}
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": {
+        **data["tool_input"], "invoker": stamp}}}))
+    sys.exit(0)
 if tool != "Bash":
     sys.exit(0)
 # The wrapper, then words a shell (bash or zsh) takes as they are: plain characters, or
@@ -795,7 +809,8 @@ if not isinstance(command, str) or not command.startswith(WRAPPER) \
 ONLY_GIT
 } > "${ONLY_GIT}"
 chmod 500 "${ONLY_GIT}"
-matcher="Bash"
+# Token mode: Bash, and the Caliber calls the hook stamps.
+matcher="Bash|mcp__caliber__submit_audit|mcp__caliber__verify_spec"
 [ "${mode}" = "token" ] || matcher=".*"
 AGENT_SETTINGS="$(python3 -I -c '
 import json, sys
@@ -830,7 +845,7 @@ echo "Caliber check: the agent is running (this takes a few minutes)."
 if [ "${mode}" = "token" ]; then
   (
     cd "${checkout_dir}" || exit 1
-    exec env -u CALIBER_TOKEN \
+    exec env -u CALIBER_TOKEN CALIBER_PUSH_HOOK_RUN=1 \
       claude -p "${PROMPT}" \
       --restricted --tools "Bash,Read,Grep,Glob" --settings "${AGENT_SETTINGS}" \
       --mcp-config "${MCP_CONFIG}" --strict-mcp-config \
@@ -844,7 +859,7 @@ else
     # The pushed commit's .mcp.json could start its own MCP servers: gone from this
     # throwaway checkout before the agent starts (CodeRabbit on infinum/caliber-plugin#7).
     rm -f -- "${checkout_dir}/.mcp.json"
-    exec env -u CALIBER_TOKEN \
+    exec env -u CALIBER_TOKEN CALIBER_PUSH_HOOK_RUN=1 \
       claude -p "${PROMPT}" \
       --setting-sources user --settings "${AGENT_SETTINGS}" --permission-mode default \
       --tools "Bash,Read,Grep,Glob" \

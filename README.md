@@ -14,7 +14,8 @@ Code tab and Cowork:
   project, where it comes from and the Caliber instance; in a clone of a project's repository that has no
   Caliber block, the line instead has Claude offer the setup once (Yes, recommended; Not now; Don't ask again); after the
   agent's own `git push` (or a pull request it opens from the command line), Claude runs the Caliber check in
-  the same session.
+  the same session; and before each audit or spec verdict it sends, a stamp of who sent it (a subagent or the
+  session itself), so Caliber can show that an independent subagent ran the check.
 
 The plugin does nothing without a Caliber account. It holds configuration and short command files only: no
 secret, no token, no prompt text. Each command calls the Caliber tool of the same name and follows the
@@ -120,9 +121,10 @@ A release is one commit that bumps `version` in `plugins/caliber/.claude-plugin/
 `plugin_version` that `plugins/caliber/commands/status.md`, `setup.md` and `setup-usage.md` pass, together. The
 server address never changes between releases, so installed copies keep their sign-in after `/plugin update`.
 
-`plugins/caliber/scripts/` holds byte-identical copies of the server's four hook files
-(`backend/app/services/caliber/hooks/` in `infinum/caliber`: `agent-post-push.sh`, `pre-push`, `sync.py` and
-`check-on-push.sh`), of one hooks version. When the server's scripts change, copy all four and record each
+`plugins/caliber/scripts/` holds byte-identical copies of the server's five hook files
+(`backend/app/services/caliber/hooks/` in `infinum/caliber`: `agent-post-push.sh`, `pre-push`, `sync.py`,
+`check-on-push.sh` and, from hooks version 20, `stamp-invoker.py`), of one hooks version. When the server's
+scripts change, copy all of them and record each
 `<hooks version> <sha256> [<file>]` in `scripts/server-hooks.sha256` (a line without a file name is
 `agent-post-push.sh`'s): new lines for a new hooks version; a line is fixed once its hooks version is released.
 The session hook starts a virtual clone's commit sync with the plugin's own `pre-push` (from 1.4.0), and from
