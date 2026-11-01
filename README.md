@@ -37,8 +37,21 @@ Then sign in once: run `/mcp`, choose `plugin:caliber:caliber` and sign in with 
 `claude mcp login plugin:caliber:caliber` in a shell). Claude Code renews the sign-in from then on; the
 background check on push uses the same sign-in.
 
-Update with `/plugin update caliber@caliber`. `/caliber:status` tells you when the installed plugin is older
-than your Caliber expects.
+#### Keep the plugin up to date
+
+Claude Code updates a plugin by itself only when its marketplace has auto-update on, and for a marketplace
+outside Anthropic's own, like `caliber`, it is off by default. Turn it on once:
+
+1. In Claude Code, run `/plugin` and open the **Marketplaces** tab.
+2. Select **caliber**, then **Enable auto-update**.
+
+From then on Claude Code checks the marketplace when a session starts and downloads a new version; it says
+`Plugin updated: caliber · Run /reload-plugins to apply`. Run `/reload-plugins`, or start a new session, to
+use it.
+
+To update now instead: in a session, `/plugin` → **Installed** → **caliber** → **Update now**; from a shell,
+`claude plugin update caliber@caliber`. `/caliber:status` tells you when the installed plugin is older than
+your Caliber expects.
 
 ### Cowork, and every Claude app of your account
 
@@ -70,6 +83,11 @@ A session in a repository set up for Caliber starts with one line of context for
 ``Caliber: project `checkout` (the Caliber block) · app.caliberhq.io``: the project, where it comes from
 (this clone's `caliber.project`, the block, or a warning when the two name different projects) and the
 instance the plugin talks to. `/caliber:status` starts with the same.
+
+From plugin 1.8.7 the same session start also compares the plugin with the versions your Caliber recommends
+and needs (`<instance>/mcp/plugin/versions`, read at most once a day and kept in `~/.cache/caliber`): below the
+recommended version Claude tells you once a day that a newer plugin is out, and below the oldest one Caliber
+serves it asks you to update before it uses Caliber.
 
 A clone that has no Caliber block and no `caliber.project` is offered the setup instead, the first time the
 session needs a Caliber project and one of your projects lists the clone's origin: **Yes (Recommended)** runs
@@ -119,7 +137,7 @@ is not needed there.
 
 A release is one commit that bumps `version` in `plugins/caliber/.claude-plugin/plugin.json` and the
 `plugin_version` that `plugins/caliber/commands/status.md`, `setup.md` and `setup-usage.md` pass, together. The
-server address never changes between releases, so installed copies keep their sign-in after `/plugin update`.
+server address never changes between releases, so installed copies keep their sign-in after an update.
 
 `plugins/caliber/scripts/` holds byte-identical copies of the server's five hook files
 (`backend/app/services/caliber/hooks/` in `infinum/caliber`: `agent-post-push.sh`, `pre-push`, `sync.py`,
