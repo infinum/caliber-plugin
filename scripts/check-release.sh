@@ -3,11 +3,12 @@
 #   - plugin.json's version equals the plugin_version that commands/status.md, setup.md and setup-usage.md
 #     pass, and the two setup commands name the plugin's sync script;
 #   - .mcp.json's server has no headers (they are part of the sign-in's key) and its URL is .../mcp/plugin;
-#   - scripts/agent-post-push.sh, pre-push, sync.py and check-on-push.sh are the server's files for their hooks
+#   - scripts/agent-post-push.sh, pre-push, sync.py, check-on-push.sh and stamp-invoker.py are the server's files for their hooks
 #     version (scripts/server-hooks.sha256, and the files themselves when CALIBER_SERVER_DIR names a checkout of
 #     infinum/caliber), of one hooks version, and executable;
 #   - hooks/hooks.json runs agent-post-push.sh with the `claude plugin` marker after each Bash command, and
-#     with `claude plugin session` at the start of a session;
+#     with `claude plugin session` at the start of a session, and stamp-invoker.py with `python3 -I` before
+#     Caliber's submit_audit and verify_spec;
 #   - every command exists and allows exactly its own tool, projects and Read, plus reading this clone's
 #     caliber.project (a command that resolves the project) or setting and unsetting it (/caliber:project).
 # Run from anywhere:  scripts/check-release.sh
@@ -69,9 +70,10 @@ sys.exit(1 if bad else 0)
 PY
 
 # 3. The hook scripts: the server's, byte for byte, of one hooks version. A pin line without a file name is
-#    agent-post-push.sh's. From hooks version 18 the plugin ships all four (setup copies them).
+#    agent-post-push.sh's. From hooks version 18 the plugin ships all four (setup copies them), from 20 also
+#    stamp-invoker.py.
 hooks_version=""
-for name in agent-post-push.sh pre-push sync.py check-on-push.sh; do
+for name in agent-post-push.sh pre-push sync.py check-on-push.sh stamp-invoker.py; do
   hook="$plugin/scripts/$name"
   if [ ! -f "$hook" ]; then
     fail "scripts/$name is missing"
@@ -121,6 +123,15 @@ for event, matcher, args in (("PostToolUse", "Bash", "claude plugin"),
     if len(found) != 1 or len(runs) != 1:
         on = f"{event} {matcher}" if matcher else f"{event} (no matcher)"
         bad.append(f"hooks/hooks.json must run {want} once on {on}, and the script nothing else there")
+# Before Caliber's submit_audit and verify_spec, under every server name: the stamp of who called.
+stamp = 'python3 -I "${CLAUDE_PLUGIN_ROOT}"/scripts/stamp-invoker.py'
+found = [e for e in hooks.get("PreToolUse", [])
+         if e.get("matcher") == "mcp__.*[Cc]aliber.*__(submit_audit|verify_spec)"
+         and [h.get("command") for h in e.get("hooks", [])] == [stamp]]
+runs = [h for e in hooks.get("PreToolUse", []) for h in e.get("hooks", [])
+        if "stamp-invoker.py" in str(h.get("command", ""))]
+if len(found) != 1 or len(runs) != 1:
+    bad.append(f"hooks/hooks.json must run {stamp} once on PreToolUse of submit_audit and verify_spec")
 for b in bad:
     print(f"check-release: {b}", file=sys.stderr)
 sys.exit(1 if bad else 0)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 19
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 20
 # Written by /caliber:setup-usage. Do not edit: the next version replaces the file whole.
 # Run only by the `pre-push --sync` beside it (python3 -I), which decides whether this copy may
 # send the token and passes the trigger and state directory in the environment. Authors are
@@ -21,7 +21,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 19
+VERSION = 20
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
