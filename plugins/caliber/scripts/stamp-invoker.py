@@ -17,7 +17,7 @@ MAX = 128
 PUSH_HOOK = "caliber-push-hook"
 
 
-def text(value):
+def clean(value):
     return value.strip()[:MAX] if isinstance(value, str) and value.strip() else None
 
 
@@ -26,11 +26,11 @@ def main():
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict) or not TOOLS.fullmatch(str(data.get("tool_name", ""))):
         return
-    version = text(os.environ.get("CLAUDE_CODE_VERSION"))
-    stamp = {"harness": text(f"claude-code/{version}" if version else "claude-code"),
-             "agent_id": text(data.get("agent_id")),
-             "agent_type": text(data.get("agent_type")),
-             "session_id": text(data.get("session_id"))}
+    version = clean(os.environ.get("CLAUDE_CODE_VERSION"))
+    stamp = {"harness": clean(f"claude-code/{version}" if version else "claude-code"),
+             "agent_id": clean(data.get("agent_id")),
+             "agent_type": clean(data.get("agent_type")),
+             "session_id": clean(data.get("session_id"))}
     if os.environ.get("CALIBER_PUSH_HOOK_RUN") == "1":
         stamp.update(agent_id=None, agent_type=PUSH_HOOK)
     invoker = {key: value for key, value in stamp.items() if value}
