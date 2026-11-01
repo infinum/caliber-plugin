@@ -19,10 +19,11 @@ TOOLS = re.compile(r"mcp__.*__(submit_audit|verify_spec)")
 MAX = 128
 PUSH_HOOK = "caliber-push-hook"
 # The fields Caliber's tool needs to record what the agent judged: `submit_audit` requires
-# `kind`, `head_sha` and the `findings` list; `verify_spec` records only with `key` and the
-# `verdicts` list (without them it returns the rules and records nothing, so no stamp is needed).
+# `kind`, `head_sha` and the `findings` list; `verify_spec` records only with `key`, the
+# `verdicts` list and the `criteria_sha` its first step returned (without them it returns the
+# rules and records nothing, so no stamp is needed).
 CALIBER_SHAPE = {"submit_audit": (("kind", str), ("head_sha", str), ("findings", list)),
-                 "verify_spec": (("key", str), ("verdicts", list))}
+                 "verify_spec": (("key", str), ("verdicts", list), ("criteria_sha", str))}
 
 
 def caliber_call(tool, tool_input):
