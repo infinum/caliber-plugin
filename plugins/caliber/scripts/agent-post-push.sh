@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 20
+# Caliber check on push: the agent session hook. caliber-hooks-version: 21
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -9,8 +9,8 @@
 #
 # The Claude Code plugin runs it everywhere as  agent-post-push.sh claude plugin : it
 # acts only with a Caliber block or .caliber/, and not where the repository's own copy runs.
-# At a session start,  agent-post-push.sh claude plugin session  prints one line: the
-# project, its source and the Caliber host. Without a project the line has the agent
+# At a session start,  agent-post-push.sh claude plugin session  hands the agent one line:
+# the project, its source and the Caliber host. Without a project the line has the agent
 # offer the setup once, when a project lists the origin (shown without userinfo); never
 # with caliber.askSetup false, on a resume or a compaction.
 # python3 runs with -I, so a module planted at the repository's root never runs.
@@ -225,10 +225,9 @@ if os.environ.get("CALIBER_HOOK_SESSION"):  # a session start
     if not host or not re.fullmatch(r"[a-z0-9.:-]{1,253}", host):
         host = "CALIBER_URL names no plain host"
     line = "Caliber: project `" + slug + "` (" + source + ") \u00b7 " + host
-    # The person sees systemMessage.
+    # For the model alone: a systemMessage would be a warning banner in the Claude apps.
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                             "additionalContext": line},
-                      "systemMessage": line}))
+                                             "additionalContext": line}}))
     sys.exit(0)
 
 try:
