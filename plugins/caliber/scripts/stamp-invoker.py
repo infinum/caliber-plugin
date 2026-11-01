@@ -2,7 +2,10 @@
 # Caliber invoker stamp. caliber-hooks-version: 20
 # A Claude Code PreToolUse hook on Caliber's submit_audit and verify_spec: it writes `invoker`
 # (who made the call, as the harness knows it) into the tool's input, replacing whatever the
-# agent put there (brief assure-independent-checks-stamp). Run with `python3 -I`; standard
+# agent put there (brief assure-independent-checks-stamp). Its matcher takes the two tool names
+# under any server name, since a client names the server; the input then has to be Caliber's
+# (`CALIBER_SHAPE`: what the two tools require to record a result), so a tool of another server
+# with the same name is left as it is. Run with `python3 -I`; standard
 # library only. It never blocks a call and asks for no permission: on anything it cannot read
 # it prints nothing and the call goes through unchanged. A subagent's call carries `agent_id`;
 # the push hook's own run (`CALIBER_PUSH_HOOK_RUN=1`, set by check-on-push.sh) is stamped
@@ -15,6 +18,15 @@ import sys
 TOOLS = re.compile(r"mcp__.*__(submit_audit|verify_spec)")
 MAX = 128
 PUSH_HOOK = "caliber-push-hook"
+# The fields Caliber's tool needs to record what the agent judged: `submit_audit` requires
+# `kind`, `head_sha` and the `findings` list; `verify_spec` records only with `key` and the
+# `verdicts` list (without them it returns the rules and records nothing, so no stamp is needed).
+CALIBER_SHAPE = {"submit_audit": (("kind", str), ("head_sha", str), ("findings", list)),
+                 "verify_spec": (("key", str), ("verdicts", list))}
+
+
+def caliber_call(tool, tool_input):
+    return all(isinstance(tool_input.get(field), kind) for field, kind in CALIBER_SHAPE[tool])
 
 
 def clean(value):
@@ -24,7 +36,8 @@ def clean(value):
 def main():
     data = json.load(sys.stdin)
     tool_input = data.get("tool_input")
-    if not isinstance(tool_input, dict) or not TOOLS.fullmatch(str(data.get("tool_name", ""))):
+    match = TOOLS.fullmatch(str(data.get("tool_name", "")))
+    if not isinstance(tool_input, dict) or not match or not caliber_call(match[1], tool_input):
         return
     version = clean(os.environ.get("CLAUDE_CODE_VERSION"))
     stamp = {"harness": clean(f"claude-code/{version}" if version else "claude-code"),

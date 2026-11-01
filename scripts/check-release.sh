@@ -126,7 +126,7 @@ for event, matcher, args in (("PostToolUse", "Bash", "claude plugin"),
 # Before Caliber's submit_audit and verify_spec, under every server name: the stamp of who called.
 stamp = 'python3 -I "${CLAUDE_PLUGIN_ROOT}"/scripts/stamp-invoker.py'
 found = [e for e in hooks.get("PreToolUse", [])
-         if e.get("matcher") == "mcp__.*[Cc]aliber.*__(submit_audit|verify_spec)"
+         if e.get("matcher") == "mcp__.*__(submit_audit|verify_spec)"
          and [h.get("command") for h in e.get("hooks", [])] == [stamp]]
 runs = [h for e in hooks.get("PreToolUse", []) for h in e.get("hooks", [])
         if "stamp-invoker.py" in str(h.get("command", ""))]

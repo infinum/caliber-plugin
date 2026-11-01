@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__.*[Cc]aliber.*__(submit_audit|verify_spec)",
+        "matcher": "mcp__.*__(submit_audit|verify_spec)",
         "hooks": [
           {
             "type": "command",
