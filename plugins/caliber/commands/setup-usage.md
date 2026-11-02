@@ -8,7 +8,7 @@ Caliber plugin was installed or updated in this session and its Caliber server i
 connection may be signed in to another organisation, and would say this repository is not there): tell me to run
 `/reload-plugins` (or start a new session) and then this command again, and stop.
 When its only Caliber tool is `authenticate`, Caliber is loaded but not signed in: the sign-in rule below applies.
-Call the Caliber tool `setup-usage` with `plugin_version` = "1.9.0" and `project` = the slug typed after the
+Call the Caliber tool `setup-usage` with `plugin_version` = "1.9.1" and `project` = the slug typed after the
 command, "$ARGUMENTS", when there is one; else the slug `git config --local --get caliber.project` prints (this
 clone's project), else the slug the Caliber block of this repository names (between `<!-- caliber:start` and
 `<!-- caliber:end -->` in CLAUDE.md or AGENTS.md). A value that is not a slug, of lower-case letters, digits

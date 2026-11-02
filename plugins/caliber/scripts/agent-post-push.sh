@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 23
+# Caliber check on push: the agent session hook. caliber-hooks-version: 24
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -228,6 +228,31 @@ def ask_versions(base):
     return answer.get("got")
 
 
+def merged_versions(path, base, entry):
+    """The cache as it is now, with the entry of this session for base merged in (v24): a
+    session that asked while another one did keeps the newer answer, and the later told_at."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {}
+    state = state if isinstance(state, dict) else {}
+    theirs = state.get(base)
+    theirs = theirs if isinstance(theirs, dict) else {}
+    now = time.time()
+    def stamp(value):
+        # A stamp later than now (a clock set back) counts for nothing.
+        return value if isinstance(value, (int, float)) and value <= now else 0
+    if stamp(theirs.get("read_at")) > stamp(entry.get("read_at")):
+        for key in ("minimum", "recommended", "read_at"):
+            if key in theirs:
+                entry[key] = theirs[key]
+    for key in ("tried_at", "told_at"):
+        if stamp(theirs.get(key)) > stamp(entry.get(key)):
+            entry[key] = theirs[key]
+    return state
+
+
 def keep_versions(path, state):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -275,6 +300,8 @@ def plugin_update_note(base):
                 and version_of(got.get("recommended")):
             entry["minimum"], entry["recommended"] = got["minimum"], got["recommended"]
             entry["read_at"] = now
+    # Another session may have asked meanwhile: its answer counts here too (v24).
+    state = merged_versions(path, base, entry)
     # Versions no answer confirmed for a day are not used: an old or unreachable Caliber
     # stops the notes after a day.
     fresh = recent(entry.get("read_at"), now)

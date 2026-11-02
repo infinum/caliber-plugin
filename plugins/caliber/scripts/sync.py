@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 23
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 24
 # Written by /caliber:setup-usage. Do not edit: the next version replaces the file whole.
 # Run only by the `pre-push --sync` beside it (python3 -I), which decides whether this copy may
 # send the token and passes the trigger and state directory in the environment. Authors are
@@ -21,7 +21,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 23
+VERSION = 24
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -622,7 +622,11 @@ def main():
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
     if backfill:
-        if PAGING["done"] and tags_kept is not None:
+        if shallow:
+            # Older commits never reached Caliber (v24): no `sync-backfill`, so a backfill after
+            # `git fetch --unshallow` sends them. A partial clone holds every commit.
+            NOTES["note"] = "backfill-shallow"
+        elif PAGING["done"] and tags_kept is not None:
             history_done(since)
         else:
             NOTES["note"] = "backfill-partial"   # the next --backfill goes on
