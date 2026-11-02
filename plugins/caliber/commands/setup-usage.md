@@ -1,15 +1,25 @@
 ---
 description: "Set up your own usage for Caliber (a client repository's commit sync, your agents' telemetry)"
 argument-hint: "[project-slug]"
-allowed-tools: mcp__plugin_caliber_caliber__setup-usage, mcp__plugin_caliber_caliber__projects, Bash(git config --local --get caliber.project), Read
+allowed-tools: mcp__plugin_caliber_caliber__setup-usage, mcp__plugin_caliber_caliber__projects, Bash(git config --local --get caliber.project), Bash(git remote -v), Read
 ---
-Call the Caliber tool `setup-usage` with `plugin_version` = "1.8.7" and `project` = the slug typed after the
+First: when this session has no `mcp__plugin_caliber_caliber__` tool at all (not even `authenticate`), the
+Caliber plugin was installed or updated in this session and its Caliber server is not loaded yet. Use no other Caliber server's tools (another
+connection may be signed in to another organisation, and would say this repository is not there): tell me to run
+`/reload-plugins` (or start a new session) and then this command again, and stop.
+When its only Caliber tool is `authenticate`, Caliber is loaded but not signed in: the sign-in rule below applies.
+Call the Caliber tool `setup-usage` with `plugin_version` = "1.9.0" and `project` = the slug typed after the
 command, "$ARGUMENTS", when there is one; else the slug `git config --local --get caliber.project` prints (this
 clone's project), else the slug the Caliber block of this repository names (between `<!-- caliber:start` and
 `<!-- caliber:end -->` in CLAUDE.md or AGENTS.md). A value that is not a slug, of lower-case letters, digits
 and hyphens, starting and ending with a letter or digit, at most 64 characters, does not count: ignore it and
 tell me without repeating it. Without any, call it without `project`: it needs no Caliber project. If Caliber's only tool here is `authenticate`, Caliber
 is not signed in yet: say so (run `/mcp` and sign in to caliber) and stop. When the Caliber server has no
-`setup-usage` tool (an older server), say that `/caliber:setup` still sets up your usage too, and stop. Then
+`setup-usage` tool (an older server), say that `/caliber:setup` still sets up your usage too, and stop.
+Before calling it, run exactly `git remote -v` and take its `(fetch)` lines, origin first: each URL as
+`host/path` (drop the scheme, any `user@`, a port and a trailing `.git`; in the scp form `git@host:o/n` the `:` becomes `/`; never
+repeat a user or token a URL holds). Pass them, separated by spaces, as `repository`; when the command fails or
+prints no remote, pass no `repository`.
+Then
 follow the instructions the tool returns, in this session. When they name the plugin's sync script, it is
 `${CLAUDE_PLUGIN_ROOT}/scripts/pre-push`.
