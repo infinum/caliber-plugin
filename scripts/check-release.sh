@@ -10,7 +10,8 @@
 #     with `claude plugin session` at the start of a session, and stamp-invoker.py with `python3 -I` before
 #     Caliber's submit_audit and verify_spec;
 #   - every command exists and allows exactly its own tool, projects and Read, plus reading this clone's
-#     caliber.project (a command that resolves the project) or setting and unsetting it (/caliber:project).
+#     caliber.project (a command that resolves the project) or setting and unsetting it (/caliber:project),
+#     and `git remote -v` for the two setup commands (they pass the clone's remotes, from 1.9.0).
 # Run from anywhere:  scripts/check-release.sh
 #
 # CI has no checkout of the server, so it compares the hook script with the pinned sha256 only and cannot see
@@ -139,10 +140,12 @@ PY
 
 # 5. The commands, each allowing exactly what it needs: its own tool (/caliber:project has none of its own),
 #    projects and Read, and nothing else. Every other command resolves the project, so it reads this clone's
-#    caliber.project; /caliber:project sets and unsets it. An allowed tool is one entry between commas.
+#    caliber.project; /caliber:project sets and unsets it. /caliber:setup and /caliber:setup-usage also run
+#    `git remote -v`, to pass the clone's remotes (from 1.9.0). An allowed tool is one entry between commas.
 get='Bash(git config --local --get caliber.project)'
 set_project='Bash(git config --local caliber.project:*)'
 unset_project='Bash(git config --local --unset caliber.project)'
+remotes='Bash(git remote -v)'
 nl='
 '
 # The lines of $1 that are not lines of $2, each after a space.
@@ -164,6 +167,7 @@ for name in prd brief tech-spec plan comments check fix open-pr audit code-audit
   case $name in
     project) wanted="mcp__plugin_caliber_caliber__projects,$set_project,$unset_project,Read" ;;
     projects) wanted="mcp__plugin_caliber_caliber__projects,$get,Read" ;;
+    setup|setup-usage) wanted="mcp__plugin_caliber_caliber__$name,mcp__plugin_caliber_caliber__projects,$get,$remotes,Read" ;;
     *) wanted="mcp__plugin_caliber_caliber__$name,mcp__plugin_caliber_caliber__projects,$get,Read" ;;
   esac
   have=$(sed -n 's/^allowed-tools:[[:space:]]*//p' "$file" | sed 's/[[:space:]]*,[[:space:]]*/,/g; s/[[:space:]]*$//' \

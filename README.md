@@ -93,6 +93,9 @@ and needs (`<instance>/mcp/plugin/versions`, read at most once a day and kept in
 recommended version Claude tells you once a day that a newer plugin is out, and below the oldest one Caliber
 serves it asks you to update before it uses Caliber.
 
+From plugin 1.9.0 `/caliber:setup` and `/caliber:setup-usage` read the clone's remotes (`git remote -v`, passed as
+`host/owner/name`, never with a user or token) so that Caliber sends only the steps that fit this repository.
+
 A clone that has no Caliber block and no `caliber.project` is offered the setup instead, the first time the
 session needs a Caliber project and one of your projects lists the clone's origin: **Yes (Recommended)** runs
 `/caliber:setup` for that project, **not now** leaves it for the next session, and **don't ask again** is
