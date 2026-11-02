@@ -17,7 +17,7 @@ otherwise ask me which project. If Caliber's only tool here is `authenticate`, C
 say so (run `/mcp` and sign in to caliber) and stop. When this clone's `caliber.project` and the block name
 different projects, ask me which one to set up before calling `setup`, and pass the one I choose; that counts
 as me naming the project for setup. Before calling it, run exactly `git remote -v` and take its `(fetch)` lines, origin first: each URL as
-`host/path` (drop the scheme, any `user@` and a port; in the scp form `git@host:o/n` the `:` becomes `/`; never
+`host/path` (drop the scheme, any `user@`, a port and a trailing `.git`; in the scp form `git@host:o/n` the `:` becomes `/`; never
 repeat a user or token a URL holds). Pass them, separated by spaces, as `repository`; when the command fails or
 prints no remote, pass no `repository`.
 Then follow the instructions the tool returns, in this session.

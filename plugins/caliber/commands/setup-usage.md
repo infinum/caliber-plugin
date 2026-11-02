@@ -17,7 +17,7 @@ tell me without repeating it. Without any, call it without `project`: it needs n
 is not signed in yet: say so (run `/mcp` and sign in to caliber) and stop. When the Caliber server has no
 `setup-usage` tool (an older server), say that `/caliber:setup` still sets up your usage too, and stop.
 Before calling it, run exactly `git remote -v` and take its `(fetch)` lines, origin first: each URL as
-`host/path` (drop the scheme, any `user@` and a port; in the scp form `git@host:o/n` the `:` becomes `/`; never
+`host/path` (drop the scheme, any `user@`, a port and a trailing `.git`; in the scp form `git@host:o/n` the `:` becomes `/`; never
 repeat a user or token a URL holds). Pass them, separated by spaces, as `repository`; when the command fails or
 prints no remote, pass no `repository`.
 Then
