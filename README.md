@@ -15,7 +15,8 @@ Code tab and Cowork:
   Caliber block, the line instead has Claude offer the setup once (Yes, recommended; Not now; Don't ask again); after the
   agent's own `git push` (or a pull request it opens from the command line), Claude runs the Caliber check in
   the same session; and before each audit or spec verdict it sends, a stamp of who sent it (a subagent or the
-  session itself), so Caliber can show that an independent subagent ran the check.
+  session itself), so Caliber can show that an independent subagent ran the check (in auto mode, where a hook
+  may not change a call, the hook turns the first such call back once and names the stamp for Claude to send).
 
 The plugin does nothing without a Caliber account. It holds configuration and short command files only: no
 secret, no token, no prompt text. Each command calls the Caliber tool of the same name and follows the
