@@ -16,7 +16,7 @@ Code tab and Cowork:
   agent's own `git push` (or a pull request it opens from the command line), Claude runs the Caliber check in
   the same session; and before each audit or spec verdict it sends, a stamp of who sent it (a subagent or the
   session itself), so Caliber can show that an independent subagent ran the check (in auto mode, which would
-  refuse a call a hook changed, the hook also allows that one Caliber call, so it runs as stamped).
+  refuse a call a hook changed, the hook also allows that one call of Caliber's own server, so it runs as stamped).
 
 The plugin does nothing without a Caliber account. It holds configuration and short command files only: no
 secret, no token, no prompt text. Each command calls the Caliber tool of the same name and follows the

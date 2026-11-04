@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber invoker stamp. caliber-hooks-version: 26
+# Caliber invoker stamp. caliber-hooks-version: 27
 # A Claude Code PreToolUse hook on Caliber's submit_audit and verify_spec: it writes `invoker`
 # (who made the call, as the harness knows it) into the tool's input, replacing whatever the
 # agent put there (brief assure-independent-checks-stamp). Its matcher takes the two tool names
@@ -13,17 +13,21 @@
 # Auto mode reviews a call as the model wrote it and refuses one whose input a hook then
 # changed, and it refuses the model writing the stamp itself. So in auto mode alone the hook
 # also allows the stamped call (`permissionDecision: allow`): auto mode does not review it, and
-# what runs is what the hook wrote. Only these two Caliber calls, which record a check's result.
+# what runs is what the hook wrote. Only these two calls, which record a check's result, and only
+# under Caliber's own server names (`CALIBER_SERVERS`).
 import json
 import os
 import re
 import sys
 
-TOOLS = re.compile(r"mcp__.*__(submit_audit|verify_spec)")
+TOOLS = re.compile(r"mcp__(.*)__(submit_audit|verify_spec)")
 MAX = 128
 PUSH_HOOK = "caliber-push-hook"
-# The mode whose review refuses a call a hook rewrote: there the hook allows the call it stamps.
+# The mode whose review refuses a call a hook rewrote: there the hook allows the call it stamps,
+# but only under a name Caliber's own server goes by (the plugin's, setup's `.mcp.json`, the
+# claude.ai connector). A server renamed by hand is still stamped, and left to auto mode.
 AUTO = "auto"
+CALIBER_SERVERS = {"plugin_caliber_caliber", "caliber", "claude_ai_Caliber"}
 # The fields Caliber's tool needs to record what the agent judged: `submit_audit` requires
 # `kind`, `head_sha` and the `findings` list; `verify_spec` records only with `key`, the
 # `verdicts` list and the `criteria_sha` its first step returned (without them it returns the
@@ -44,7 +48,7 @@ def main():
     data = json.load(sys.stdin)
     tool_input = data.get("tool_input")
     match = TOOLS.fullmatch(str(data.get("tool_name", "")))
-    if not isinstance(tool_input, dict) or not match or not caliber_call(match[1], tool_input):
+    if not isinstance(tool_input, dict) or not match or not caliber_call(match[2], tool_input):
         return
     version = clean(os.environ.get("CLAUDE_CODE_VERSION"))
     stamp = {"harness": clean(f"claude-code/{version}" if version else "claude-code"),
@@ -55,7 +59,7 @@ def main():
         stamp.update(agent_id=None, agent_type=PUSH_HOOK)
     invoker = {key: value for key, value in stamp.items() if value}
     output = {"updatedInput": {**tool_input, "invoker": invoker}}
-    if data.get("permission_mode") == AUTO:
+    if data.get("permission_mode") == AUTO and match[1] in CALIBER_SERVERS:
         output = {"permissionDecision": "allow",
                   "permissionDecisionReason": "Caliber's stamp hook wrote who ran this check",
                   **output}
