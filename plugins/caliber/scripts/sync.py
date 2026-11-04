@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 25
-# Written by /caliber:setup-usage. Do not edit: the next version replaces the file whole.
-# Run only by the `pre-push --sync` beside it (python3 -I), which decides whether this copy may
-# send the token and passes the trigger and state directory in the environment. Authors are
-# hashed: clear only the developer's own or an own domain's. One line per run in sync.log;
-# nothing on the terminal.
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 26
+# Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
+# `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
+# domains'; one line per run in sync.log, nothing on the terminal.
 import base64
 import hashlib
 import json
@@ -21,12 +19,11 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 25
+VERSION = 26
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
-#: `--backfill`: the history from hello's `backfill_since`; done once `sync-backfill` exists.
-#: A first run whose window holds no commit reads the history at once (v23).
+#: `--backfill`: from hello's `backfill_since` until `sync-backfill` exists.
 BACKFILL = TRIGGER == "backfill"
 SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 PUSHED = [a for a in sys.argv[1:] if SHA.fullmatch(a)] if TRIGGER == "push" else []
@@ -35,6 +32,8 @@ PART_BYTES, MAX_REQUESTS, PAGE, PAGES, BACKFILL_PAGES = 900 * 1024, 500, 100, 5,
 #: MESSAGE_CHARS: the server's `COMMIT_MESSAGE_MAX`.
 MESSAGE_CHARS, HOUR, LOCK_AGE, WAIT = 4096, 3600, 2 * 3600, 120
 UPPER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+#: The clouds' kinds; else hello's `provider`.
+CLOUDS = {"github.com": "github", "gitlab.com": "gitlab", "bitbucket.org": "bitbucket"}
 SPACE = " \t\n\r\v\f"
 #: Git, gh and glab never prompt.
 QUIET = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS="",
@@ -172,6 +171,13 @@ def repository_of(url):
     return key if re.fullmatch(r"[a-z0-9.-]+(?:/[A-Za-z0-9._-]+){2,}", key) else None
 
 
+def unscm(key):
+    """`key` without Bitbucket Server's `scm/`."""
+    host, _, path = key.partition("/")
+    return f"{host}/{path[4:]}" if host not in CLOUDS and path.lower().startswith("scm/") \
+        and path.count("/") >= 2 else key
+
+
 class Stay(urllib.request.HTTPRedirectHandler):
     """The token goes to the recorded endpoint only."""
 
@@ -220,7 +226,7 @@ SALT = ""
 
 
 def moved():
-    """Whether setup-usage moved the sync since this run read them."""
+    """Whether setup-usage moved the sync meanwhile."""
     return (read("sync-token") or "").strip() != TOKEN or config("caliber.mcpUrl") != endpoint
 
 
@@ -251,7 +257,7 @@ def take_lock():
         if pid > 0 and alive(pid) and time.time() - started < LOCK_AGE:
             return False
         try:
-            os.remove(path)            # dead or stale: taken over
+            os.remove(path)  # dead or stale: taken over
         except OSError:
             return False
         return take_lock()
@@ -263,7 +269,7 @@ def take_lock():
 deadline = time.time() + (WAIT if TRIGGER in ("push", "backfill") else 0)
 while not take_lock():
     if time.time() >= deadline:
-        sys.exit(0)                    # another run holds it
+        sys.exit(0)  # another run holds it
     time.sleep(1)
 
 
@@ -275,7 +281,7 @@ def release():
         pass
 
 
-# Again under the lock setup-usage holds to move the sync: never the old token or state.
+# Again under the lock: never a moved sync's old token or state.
 if moved():
     log("moved")
     release()
@@ -283,12 +289,12 @@ if moved():
 
 own_email = config("user.email")
 logins = {}
-#: gh, glab and APIs allowed: the last hello's `cli` until this one answers.
+#: gh, glab and APIs allowed: the last hello's `cli`.
 CLI = {"on": (read("sync-cli") or "").strip() == "1"}
 
 
 def own_login(host):
-    """From the host's CLI: never guessed, never asked without `cli`."""
+    """From the host's CLI, only with `cli`."""
     if not CLI["on"]:
         return ""
     if host not in logins:
@@ -358,7 +364,8 @@ def main():
     wanted = config("caliber.syncRepository").lower()
     wanted = wanted[:-4] if wanted.endswith(".git") else wanted
     keys = {r: repository_of(config(f"remote.{r}.url")) for r in remotes}
-    named = [r for r in remotes if wanted and (keys[r] or "").lower() == wanted]
+    named = [r for r in remotes if wanted and (keys[r] or "").lower() == wanted] or \
+        [r for r in remotes if wanted and unscm((keys[r] or "").lower()) == wanted]
     order = named or sorted((r for r in remotes if keys[r]),
                             key=lambda r: ({"origin": 0, "upstream": 1}.get(r, 2), r))
     if not order:
@@ -379,7 +386,7 @@ def main():
     if not remote:
         log("not-virtual" if status == 204 else "hello-failed", hello=status)
         return
-    # `cli=0`: no gh, glab or API from here on; an older server's silence allows them.
+    # `cli=0`: no gh, glab or API from here on (no answer: allowed).
     CLI["on"] = (answer.get("cli") or "1").strip() != "0"
     save("sync-cli", ("1" if CLI["on"] else "0") + "\n")
     try:
@@ -400,10 +407,9 @@ def main():
     since = (answer.get("backfill_since" if BACKFILL else "first_since") or "").strip()
     since = since if re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
     if BACKFILL and not since:
-        log("no-backfill", hello=200)          # an older server
+        log("no-backfill", hello=200)  # an older server
         return
-    # `history=1` (v23): Caliber holds the repository's history already, so a backfill sends
-    # nothing and is done, and a first run never widens to it.
+    # `history=1`: Caliber holds the history: a backfill sends none.
     there = (answer.get("history") or "").strip() == "1"
     if BACKFILL and there:
         if finish_empty(run_id):
@@ -416,6 +422,9 @@ def main():
         else ""
     backfill = BACKFILL
     host, path = key.split("/", 1)
+    told = (answer.get("provider") or "").strip()
+    kind = CLOUDS.get(host) or (told if told in CLOUDS.values() else "")
+    pr_path = unscm(key).split("/", 1)[1] if kind == "bitbucket" else path
     me = norm(own_email) if own_email else None
     login = own_login(host)
 
@@ -450,7 +459,7 @@ def main():
              if SHA.fullmatch(t) and t in commits_known]
     cut = [] if FULL or backfill else saved
     window_since = since if backfill or ((first or not saved) and not FULL) else ""
-    # A first window with no commit: the history at once, as `--backfill` reads it (v23).
+    # An empty first window: the history at once.
     if window_since and not backfill and not there and history_since and tips:
         count = git("rev-list", "--count", "--no-merges", f"--since={window_since}", *tips,
                     "--")
@@ -469,7 +478,7 @@ def main():
     lines_of = {}
     groups = []
     if tips:
-        # --no-show-signature: else `log.showSignature` mixes in gpg's lines.
+        # Else `log.showSignature` mixes in gpg's lines.
         log_args = ["log", "--no-show-signature", "--no-merges", "--reverse",
                     "--format=%x00%H%x09%aI%x09%ae"]
         out = git(*log_args, *([] if partial else ["--numstat"]), *rangeargs, "--",
@@ -509,7 +518,7 @@ def main():
             lines_of[sha] = authored
         counts["commits"] = len(lines_of)
 
-    # 6a, 6b. Branch fingerprints; PRs the default branch names. Git only.
+    # 6a, 6b. Branch fingerprints; PRs of the default branch.
     branch = asked.get("branch") or ""
     default_tip = (git("rev-parse", "--verify", "--quiet",
                        f"refs/remotes/{remote}/{branch}^{{commit}}") or "").strip() \
@@ -519,7 +528,7 @@ def main():
         if not partial and not shallow:
             groups += branch_groups(remote, branch, default_tip, PUSHED, done)
         history = history_groups(default_tip, cut, window_since,
-                                 host, path, branch, text, partial or bool(shallow),
+                                 host, pr_path, kind, branch, text, partial or bool(shallow),
                                  clear_email)
         if history is None:
             log("history-failed", hello=200)
@@ -547,33 +556,24 @@ def main():
     limit_pages = BACKFILL_PAGES if backfill else PAGES
     pages = []
     PAGING["done"] = True
-    # Whether another clone could read more pull requests than this one: the CLI is allowed for
-    # a host it reads, and this machine has none of it.
+    # The CLI may read this host, but isn't here.
     cli_host = CLI["on"] and host in ("github.com", "gitlab.com")
     read_prs = False
     if not CLI["on"]:
         pass
-    elif host == "github.com" and shutil.which("gh"):
-        read_prs = True
-        PAGING["done"] = False
-        pages = github_pages(f"{host}/{path}", start, text, limit_pages)
+    elif host == "github.com" and shutil.which("gh") or host == "gitlab.com" \
+            and shutil.which("glab") and shutil.which("jq"):
+        read_prs, PAGING["done"], hub = True, False, host == "github.com"
+        pages = github_pages(f"{host}/{path}", start, text, limit_pages) if hub \
+            else gitlab_pages(path, start, text, limit_pages)
         for rows, after in zip(pages, PAGING["after"]):
-            for index, pr in enumerate(rows):
-                last = index == len(rows) - 1
-                groups.append((github_lines(pr, text, clear_login), after if last else None))
-    elif host == "gitlab.com" and shutil.which("glab") and shutil.which("jq"):
-        read_prs = True
-        PAGING["done"] = False
-        pages = gitlab_pages(path, start, text, limit_pages)
-        for rows, after in zip(pages, PAGING["after"]):
-            for index, mr in enumerate(rows):
-                last = index == len(rows) - 1
-                groups.append((gitlab_lines(path, mr, text, clear_login), after if last else None))
+            for index, row in enumerate(rows):
+                lines = github_lines(row, text, clear_login) if hub \
+                    else gitlab_lines(path, row, text, clear_login)
+                groups.append((lines, after if index == len(rows) - 1 else None))
     counts["prs"] = sum(len(rows) for rows in pages)
 
-    # The whole history, as any clone could send it (fetched now, not shallow or partial, pull
-    # requests read where the CLI may read them): Caliber keeps it, and another clone's backfill
-    # that `hello` answers `history=1` sends nothing (v23).
+    # The whole history: other clones' backfills then send none.
     complete = backfill and fetched and PAGING["done"] and tags_kept is not None \
         and not partial and not shallow and (read_prs or not cli_host)
 
@@ -623,21 +623,20 @@ def main():
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
     if backfill:
         if shallow:
-            # Older commits never reached Caliber (v24): no `sync-backfill`, so a backfill after
-            # `git fetch --unshallow` sends them. A partial clone holds every commit.
+            # Older commits missing: wait for `git fetch --unshallow`.
             NOTES["note"] = "backfill-shallow"
         elif PAGING["done"] and tags_kept is not None:
             history_done(since)
         else:
-            NOTES["note"] = "backfill-partial"   # the next --backfill goes on
+            NOTES["note"] = "backfill-partial"  # the next --backfill goes on
     elif there and history_since:
-        history_done(history_since)              # another clone sent it: no backfill here
+        history_done(history_since)  # another clone sent it: no backfill here
         NOTES["note"] = "history-there"
     log("ok", hello=200, status=200)
 
 
 def history_done(since):
-    """The clone's history is in Caliber: setup-usage starts no backfill."""
+    """The history is in Caliber: no backfill."""
     save("sync-backfill", since + "\n")
     try:
         os.remove(where("sync-backfill-window"))
@@ -646,7 +645,7 @@ def history_done(since):
 
 
 def finish_empty(run_id):
-    """Ends a run that sends nothing with one empty last part; False (logged) when refused."""
+    """One empty last part ends a run; False (logged) when refused."""
     status, reply = post(f"/caliber/sync/activity?run={urllib.parse.quote(run_id)}&last=1", b"",
                          "text/tab-separated-values; charset=utf-8")
     if status != 200:
@@ -671,7 +670,7 @@ BRANCHES, BRANCH_COMMITS = 100, 250
 
 
 def fingerprint(base, tip):
-    """Patch-id of base..tip or "", in a diff form the clone's settings can't change."""
+    """Patch-id of base..tip or "", whatever the clone's diff settings."""
     diff = run(["git", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
                 "--no-relative", "--full-index", "--src-prefix=a/", "--dst-prefix=b/",
                 "--diff-algorithm=default", "--indent-heuristic", "--unified=3",
@@ -718,10 +717,10 @@ def body_line(message):
     return next((line.strip() for line in body.splitlines() if line.strip()), "")
 
 
-def named_pull_request(host, path, parents, message):
-    """(number, title, head ref) of a PR named in the default form, else None."""
+def named_pull_request(host, path, kind, parents, message):
+    """(number, title, head ref) of a PR in `kind`'s default message, else None."""
     first = message.split("\n", 1)[0]
-    if host == "github.com":
+    if kind == "github":
         found = re.match(r"Merge pull request #(\d{1,10}) from (\S+)", first)
         if found and len(parents) == 2:
             head = found.group(2)
@@ -730,23 +729,32 @@ def named_pull_request(host, path, parents, message):
         found = re.search(r" \(#(\d{1,10})\)$", first)
         if found and len(parents) == 1:
             return found.group(1), first[:found.start()], ""
-    elif host == "gitlab.com" and len(parents) in (1, 2):
-        # GitLab's `group/app!7`, or the URL some projects' templates write instead. The footer
-        # is the last such line, whatever it names: a description above it may name another.
+    elif kind == "gitlab" and len(parents) in (1, 2):
+        # The last `See merge request` line: `<path>!<n>`, or its URL on this host.
         footer = [*re.finditer(r"^See merge request\b(.*)$", message, re.M)][-1:]
-        found = footer and re.fullmatch(r"(?:https://gitlab\.com/(\S+)/-/merge_requests/|"
-                                        r"(\S+)!)(\d{1,10})", footer[0].group(1).strip())
+        url = rf"https://(?:www\.)?{re.escape(host)}/(\S+)/-/merge_requests/"
+        found = footer and re.fullmatch(rf"(?:{url}|(\S+)!)(\d{{1,10}})",
+                                        footer[0].group(1).strip())
         if found and (found.group(1) or found.group(2)).lower() == path.lower():
             head = re.match(r"Merge branch '([^']+)' into ", first)
-            # A merge commit's title is the paragraph after its header; a squash's, its subject.
+            # A merge's title is its second paragraph; a squash's, its subject.
             paragraphs = [p for p in re.split(r"\n[ \t]*\n", message.strip("\n")) if p.strip()]
             title = first.strip() if not head else (
                 paragraphs[1].split("\n", 1)[0].strip() if len(paragraphs) > 1 else "")
             return found.group(3), title, head.group(1) if head else ""
-    elif host == "bitbucket.org" and len(parents) in (1, 2):
+    elif kind == "bitbucket" and len(parents) in (1, 2):
         found = re.match(r"Merged in (\S+) \(pull request #(\d{1,10})\)", first)
         if found:
             return found.group(2), body_line(message), found.group(1)
+        # Bitbucket Server: `Merge pull request #<n> in <P>/<R> from <b> to <t>` (< 7.0), or
+        # `Pull request #<n>: <title>` + `Merge in <P>/<R> from <b> to <t>`; a fork's: `~u/r:<b>`.
+        found = re.match(r"Merge pull request #(\d{1,10}) in (\S+) from (\S+) to \S+$", first)
+        if found and found.group(2).lower() == path.lower():
+            return found.group(1), "", found.group(3).rsplit(":", 1)[-1]
+        found = re.match(r"Pull request #(\d{1,10}): (.*)$", first)
+        merged = re.search(r"^Merge in (\S+) from (\S+) to \S+$", message, re.M)
+        if found and merged and merged.group(1).lower() == path.lower():
+            return found.group(1), found.group(2).strip(), merged.group(2).rsplit(":", 1)[-1]
     return None
 
 
@@ -760,7 +768,8 @@ def earliest(dates):
     return min(moments)[1] if moments else ""
 
 
-def history_groups(default_tip, saved, since, host, path, branch, text, sizeless, clear_email):
+def history_groups(default_tip, saved, since, host, path, kind, branch, text, sizeless,
+                   clear_email):
     """6b. `H`, `S`, `T` lines of first-parent commits naming a PR; None when unread."""
     args = ["log", "--no-show-signature", "--first-parent",
             "--format=%x1e%H%x00%P%x00%aI%x00%cI%x00%ae%x00%B"]
@@ -781,9 +790,9 @@ def history_groups(default_tip, saved, since, host, path, branch, text, sizeless
         parents = parents.split()
         if not SHA.fullmatch(sha) or not parents:
             continue
-        found = named_pull_request(host, path, parents, message.rstrip("\n"))
+        found = named_pull_request(host, path, kind, parents, message.rstrip("\n"))
         if not found or int(found[0]) < 1 or str(int(found[0])) in numbers:
-            continue                   # newest first: a number's last merge
+            continue  # newest first: a number's last merge
         number, title, head_ref = str(int(found[0])), found[1], found[2]
         numbers.add(number)
         first_parent, merge, head, brought = parents[0], sha, "", []
@@ -795,12 +804,12 @@ def history_groups(default_tip, saved, since, host, path, branch, text, sizeless
                                               for line in listed.splitlines())
                        if SHA.fullmatch(s)]
             authored = earliest(a for _, a in brought) or authored
-            if brought:                # else the merge's own author
+            if brought:  # else the merge's own author
                 email = (git("log", "--no-show-signature", "-1", "--format=%ae", head, "--")
                          or "").strip() or email
             base = (git("merge-base", first_parent, head) or "").strip()
             mark = fingerprint(base, head) if SHA.fullmatch(base) and not sizeless else ""
-            if host == "gitlab.com":
+            if kind == "gitlab":
                 # GitLab's squash: one commit, one parent.
                 rows = (git("rev-list", "--parents", f"{first_parent}..{head}", "--")
                         or "").splitlines()
@@ -824,7 +833,7 @@ def history_groups(default_tip, saved, since, host, path, branch, text, sizeless
             group.append("\t".join(("T", number, b64(title), "", field(head_ref),
                                     field(branch))))
         groups.append((group, None))
-    groups.reverse()                   # oldest first
+    groups.reverse()  # oldest first
     return groups
 
 
@@ -847,7 +856,7 @@ def tagged_dates(objects):
         head = out[at:end].decode("ascii", "replace").split()
         at = end + 1
         if len(head) != 3 or not head[2].isdigit():
-            continue                   # `<sha> missing`
+            continue  # `<sha> missing`
         size = int(head[2])
         body, at = out[at:at + size], at + size + 1
         if head[1] != "tag":
@@ -868,7 +877,7 @@ def tagged_dates(objects):
 
 
 def tag_groups(remote, default_tip, since):
-    """6c. (`G` lines, tags to save) or None; no tag ref fetched, an unsent tag not saved."""
+    """6c. (`G` lines, tags to save) or None."""
     listed = run(["git", "ls-remote", "--tags", remote], timeout=120)
     if listed is None:
         return None
@@ -888,7 +897,7 @@ def tag_groups(remote, default_tip, since):
     new = sorted(name for name in objects
                  if FULL or BACKFILL or saved.get(name) != objects[name])
     if len(new) > TAGS:
-        # The rest: the next regular run; never a full run or backfill.
+        # The rest: the next regular run.
         NOTES["tags"] = "truncated"
         new = new[:TAGS]
     commit_of = {name: peeled.get(name, objects[name]) for name in new}
@@ -917,12 +926,12 @@ def tag_groups(remote, default_tip, since):
     for name in new:
         obj = objects[name]
         if name in peeled and obj not in tagged:
-            continue                   # not fetched yet
+            continue  # not fetched yet
         at = tagged.get(obj, "") if name in peeled else ""
         commit_at = committed[commit_of[name]]
         kept[name] = obj
         if since and (at or commit_at)[:10] < since:
-            continue                   # before the window
+            continue  # before the window
         groups.append((["\t".join(("G", name, commit_of[name], at, commit_at))], None))
     return groups, kept
 
@@ -936,7 +945,7 @@ def part_lines(part):
 
 
 def history_marker(group):
-    """`H <n> -` heads each later piece of a history PR, so its lines stay with it."""
+    """`H <n> -` heads each later piece of a history PR."""
     fields = group[0].split("\t") if group else []
     return f"H\t{fields[1]}\t-" if len(fields) > 2 and fields[0] == "H" else None
 
@@ -1018,7 +1027,7 @@ def github_reviews(repository, rows):
 
 
 def next_start(start, last):
-    """`last` (inclusive), or a second later when the whole page is at `start` (no loop)."""
+    """`last`, or a second later when the whole page is at `start`."""
     if last != start:
         return last
     try:
@@ -1112,7 +1121,7 @@ def github_lines(pr, text, clear_login):
         changed = pr.get("changedFiles")
         if len(files) >= 100 or (isinstance(changed, int) and changed > len(files)):
             lines.append("\t".join(("F", number, "-")))
-    # Reviews: time and hashed author, never text; not the author's or `[bot]`s.
+    # Reviews: time and hashed author, not the author's or `[bot]`s.
     me = norm(author)
     reviewed = len(lines)
     for kind, at in (("reviews", "submittedAt"), ("comments", "createdAt")):
@@ -1190,7 +1199,7 @@ def gitlab_lines(path, mr, text, clear_login):
         lines.append("\t".join(("T", number, b64(mr.get("title") or ""),
                                 b64(mr.get("description") or ""), field(mr.get("source_branch")),
                                 field(mr.get("target_branch")))))
-        if FULL:                       # a call per merge request
+        if FULL:  # a call per merge request
             changes = gitlab(path, f"merge_requests/{number}/changes",
                              "{paths: [.changes[]?.new_path], overflow: (.overflow // false)}")
             if isinstance(changes, dict):

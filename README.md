@@ -15,8 +15,8 @@ Code tab and Cowork:
   Caliber block, the line instead has Claude offer the setup once (Yes, recommended; Not now; Don't ask again); after the
   agent's own `git push` (or a pull request it opens from the command line), Claude runs the Caliber check in
   the same session; and before each audit or spec verdict it sends, a stamp of who sent it (a subagent or the
-  session itself), so Caliber can show that an independent subagent ran the check (in auto mode, where a hook
-  may not change a call, the hook turns the first such call back once and names the stamp for Claude to send).
+  session itself), so Caliber can show that an independent subagent ran the check (in auto mode, which would
+  refuse a call a hook changed, the hook also allows that one Caliber call, so it runs as stamped).
 
 The plugin does nothing without a Caliber account. It holds configuration and short command files only: no
 secret, no token, no prompt text. Each command calls the Caliber tool of the same name and follows the
@@ -119,7 +119,7 @@ Nothing is written without your answer.
 | `/caliber:describe-specs` | Propose one-line descriptions for specs that have none, and save the ones you agree to |
 | `/caliber:status` | The project's status and the next step |
 | `/caliber:setup` | Set up this repository for Caliber, then your own usage (`/caliber:setup-usage`) |
-| `/caliber:setup-usage [project-slug]` | Set up your own usage: a client repository's commit sync (the last 30 days at once) and your agents' telemetry |
+| `/caliber:setup-usage [project-slug]` | Set up your own usage: a client repository's commit sync (the last 30 days at once; a self-hosted GitHub, GitLab or Bitbucket server's too) and your agents' telemetry |
 | `/caliber:projects` | The projects you can use, this clone's marked, and the instance |
 | `/caliber:project [slug\|--unset]` | Show, set or clear this clone's project (`caliber.project`) |
 

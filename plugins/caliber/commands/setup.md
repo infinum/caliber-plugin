@@ -7,7 +7,7 @@ Caliber plugin was installed or updated in this session and its Caliber server i
 connection may be signed in to another organisation, and would say this repository is not there): tell me to run
 `/reload-plugins` (or start a new session) and then this command again, and stop.
 When its only Caliber tool is `authenticate`, Caliber is loaded but not signed in: the sign-in rule below applies.
-Call the Caliber tool `setup` with `plugin_version` = "1.9.2" and `project` = the slug `git config --local --get caliber.project` prints
+Call the Caliber tool `setup` with `plugin_version` = "1.9.3" and `project` = the slug `git config --local --get caliber.project` prints
 (this clone's project; a value that is not a slug, of lower-case letters, digits and hyphens, starting and
 ending with a letter or digit, at most 64 characters, does not count: ignore it and tell me without repeating
 it), else the slug the Caliber block of this repository names (between `<!-- caliber:start` and
@@ -22,4 +22,4 @@ repeat a user or token a URL holds). Pass them, separated by spaces, as `reposit
 prints no remote, pass no `repository`.
 Then follow the instructions the tool returns, in this session.
 When they name the plugin's sync script, it is `${CLAUDE_PLUGIN_ROOT}/scripts/pre-push`; when they call
-the `setup-usage` tool, pass it `plugin_version` = "1.9.2" and the same `repository` too.
+the `setup-usage` tool, pass it `plugin_version` = "1.9.3" and the same `repository` too.
