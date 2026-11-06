@@ -1,14 +1,17 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 28
+# Caliber check on push: the git hook. caliber-hooks-version: 31
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, after the hook that was there. It never blocks, delays or
 # fails a push: it starts the check (check-on-push.sh) or a virtual clone's sync in the
 # background.
 #
-#   .caliber/hooks/pre-push --install
-#       turn the check on for this clone: records its endpoint and copies the hook files
-#       to <git common dir>/caliber/hooks/ (run again after the hooks change)
+#   <git common dir>/caliber/hooks/pre-push --install
+#       turn the check on for this clone: records its endpoint (setup writes the hook files
+#       there; a copy elsewhere copies them there first)
+#   <git common dir>/caliber/hooks/pre-push --install --own-only
+#       the same in a client-safe clone: only into the clone's own hooks directory, never a
+#       hooks folder the repository commits or shares, nor through a linked hook (exit 4)
 #   git config --local caliber.checkOnPush false    turn it off (true: on again)
 #   <this file> --install --virtual [--repository host/owner/name]
 #       turn the sync on for a virtual repository; the sync token comes on stdin
@@ -134,7 +137,7 @@ common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || exit 0
 caliber_hook="$common/caliber/hooks/pre-push"
 if [ ! -x "$caliber_hook" ]; then
   # The sync alone has its session route (the Caliber plugin's own copy); the check has none.
-  ! on checkOnPush || echo "Caliber: no background check from this hook: this clone has no copy of Caliber's hook in its git directory. Run .caliber/hooks/pre-push --install once more (or /caliber:setup)." >&2
+  ! on checkOnPush || echo "Caliber: no background check from this hook: this clone has no copy of Caliber's hook in its git directory. Run /caliber:setup again." >&2
   exit 0
 fi
 feed | "$caliber_hook" "$@" || true
@@ -304,11 +307,13 @@ if [ "${1:-}" = "--install" ]; then
   shift
   virtual=""
   session_only=""
+  own_only=""
   repository=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --virtual) virtual=1 ;;
       --session-only) session_only=1 ;;
+      --own-only) own_only=1 ;;
       --repository)
         [ "$#" -ge 2 ] || { say "--repository needs host/owner/name"; exit 1; }
         repository=$2
@@ -383,6 +388,11 @@ hooks, common, root = (os.path.realpath(p) for p in sys.argv[1:4])
 inside = lambda path, base: path == base or path.startswith(base + os.sep)
 print("own" if inside(hooks, common) else "versioned" if inside(hooks, root) else "shared")
 ' "$hooks" "$common" "$root") || exit 1
+  if [ -n "$own_only" ] && { [ "$where" != own ] || [ -L "$hook" ]; }; then
+    # A client-safe clone: nothing of Caliber in a file the repository commits or shares.
+    say "not installed: this clone's pre-push hook is the repository's, shared or a link, so nothing is written there; the check runs with /caliber:check"
+    exit 4
+  fi
   if [ -n "$virtual" ]; then
     # The token: in the git directory, never the working tree, readable by you alone.
     state_dir="$common/caliber"
@@ -494,21 +504,15 @@ if [ "$(git config --local --type=bool --get caliber.syncActivity 2>/dev/null)" 
     || [ ! -x "$common/caliber/hooks/pre-push" ] || sync_on=1
 fi
 [ -n "$check_on$sync_on" ] || exit 0
-# The git directory's copy says when the repository's hooks are newer (read, never run).
+# A copy in the working tree (a hook installed before hooks v17 runs one) is what the branch
+# checked out holds.
 if [ -n "$check_on" ]; then
   tree=$(cd "$root" 2>/dev/null && pwd -P) || tree=""
   copy=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)/caliber/hooks
-  version() { sed -n '2{s/.*caliber-hooks-version: \([0-9][0-9]*\).*/\1/p;q;}' "$1" 2>/dev/null; }
   case "$here/" in
-    "$copy/")
-      mine=$(version "$0")
-      theirs=$(version "$root/.caliber/hooks/pre-push")
-      if [ -n "$mine" ] && [ -n "$theirs" ] && [ "$theirs" -gt "$mine" ] 2>/dev/null; then
-        say "this clone runs Caliber's hooks version $mine from its git directory, and the repository has version $theirs: run .caliber/hooks/pre-push --install to use them"
-      fi
-      ;;
+    "$copy/") ;;                       # the git directory may sit inside the working tree
     "$tree/"*)
-      say "this clone's git hook runs the working tree's copy of this file, which the branch checked out can change: run .caliber/hooks/pre-push --install once more, so it runs a copy in the git directory"
+      say "this clone's git hook runs the working tree's copy of this file, which the branch checked out can change: run /caliber:setup again, so it runs a copy in the git directory"
       ;;
   esac
 fi
@@ -602,16 +606,58 @@ plugin_on() {
   esac
 }
 
-# An agent's push whose session hook runs the check itself.
-covered() { [ -n "$1" ] && grep -qs 'agent-post-push.sh' "$root/$2"; }
+# An agent's push whose session hook runs the check itself, only in a Caliber repository (the
+# block or `.caliber/`; elsewhere, a client-safe clone say, this hook runs the check): the
+# person's entry of that agent, whose script is there and marked a push it placed in this clone
+# in the last 7 days (a hook the agent does not run, a Codex hook nobody approved, a workspace
+# whose clone it cannot tell, never takes the check); the
+# plugin's hook, unless the repository's settings name an entry whose script is gone; or, until
+# v32, an entry of the repository whose script is there (one set up before v31).
+caliber_repo() { [ -d "$root/.caliber" ] || grep -qsF '<!-- caliber:start' "$root/CLAUDE.md" "$root/AGENTS.md"; }
+# person <agent> <the person's hook file>: the absolute path setup wrote into the entry.
+person() {
+  [ -f "$2" ] || return 1
+  script=$(sed -n "s/.*h='\([^']*\/agent-post-push\.sh\)'.*/\1/p" "$2" 2>/dev/null | head -n 1)
+  [ -n "$script" ] && [ -x "$script" ] || return 1
+  [ -n "$common" ] && [ -n "$(find "$common/caliber/seen-$1" -mmin -10080 2>/dev/null)" ]
+}
+repository() {
+  [ -x "$root/.caliber/hooks/agent-post-push.sh" ] && grep -qs 'agent-post-push.sh' "$root/$1"
+}
+covered() { [ -n "$1" ] && { person "$2" "$3" || repository "$4"; }; }
+common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
 in_session() {
   [ "$(git config --type=bool --get caliber.checkInSession 2>/dev/null)" != "false" ] || return 1
-  covered "${CLAUDECODE:-}" .claude/settings.json ||
-    covered "${CODEX_SANDBOX:-}" .codex/hooks.json ||
-    covered "${CURSOR_AGENT:-}" .cursor/hooks.json ||
-    covered "${GEMINI_CLI:-}" .gemini/settings.json ||
-    { [ -n "${CLAUDECODE:-}" ] && command -v python3 >/dev/null 2>&1 && plugin_on session; }
+  caliber_repo || return 1
+  covered "${CLAUDECODE:-}" claude "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" \
+      .claude/settings.json ||
+    covered "${CODEX_SANDBOX:-}" codex "${CODEX_HOME:-$HOME/.codex}/hooks.json" .codex/hooks.json ||
+    covered "${CURSOR_AGENT:-}" cursor "$HOME/.cursor/hooks.json" .cursor/hooks.json ||
+    covered "${GEMINI_CLI:-}" gemini "" .gemini/settings.json ||
+    { [ -n "${CLAUDECODE:-}" ] &&
+      ! grep -qsF '.caliber/hooks/agent-post-push.sh' "$root/.claude/settings.json" &&
+      command -v python3 >/dev/null 2>&1 && plugin_on session; }
 }
+
+# What this hook did with the push, for the session hook (one check per push): `background`
+# with the commits it started the check of, `session` (it left the push to the agent's session
+# hook) or `none`.
+decided() {
+  [ -n "$common" ] && [ -d "$common/caliber" ] || return 0
+  record="$(date +%s) $1"
+  if [ "$1" = background ]; then
+    # The commits of this push it checks: those already recorded, then this one.
+    if [ -f "$common/caliber/last-push" ]; then
+      read -r _ was shas <"$common/caliber/last-push" 2>/dev/null || was=""
+      [ "$was" != background ] || record="$record $shas"
+    fi
+    record="$record $2"
+  fi
+  { printf '%s\n' "$record" >"$common/caliber/last-push.new"; } 2>/dev/null \
+    && mv -f "$common/caliber/last-push.new" "$common/caliber/last-push" 2>/dev/null
+  return 0
+}
+decided none
 
 # What the check needs, said once, on the first branch to check.
 ready() {
@@ -651,9 +697,11 @@ printf '%s\n' "$refs" | while read -r _ local_sha remote_ref _; do
   fi
   if in_session; then
     say "no background check: the agent session that pushed runs the check (its Caliber session hook)"
+    decided session
     exit 0
   fi
   ready || exit 0
+  decided background "$local_sha"
   # Its own session, so the push (and a Ctrl-C after it) leaves it running.
   nohup python3 -I -c 'import os, sys
 try:

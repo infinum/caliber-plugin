@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Caliber check on push: the runner. caliber-hooks-version: 28
+# Caliber check on push: the runner. caliber-hooks-version: 31
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
-# Started detached by .caliber/hooks/pre-push:  check-on-push.sh <branch> <sha> [remote]
+# Started detached by the git hook (pre-push):  check-on-push.sh <branch> <sha> [remote]
 # Runs the Caliber check of the pushed commit with `claude -p` in a detached worktree in
 # a private temporary directory: read-only tools and a git wrapper held to the checkout.
 # It never pushes and writes nothing to the repository. A newer push stops the older run.
@@ -135,7 +135,7 @@ if [ "${mode}" = "token" ]; then
 if [ -z "${CALIBER_MCP_URL:-}" ]; then
   CALIBER_MCP_URL="$(git -C "${root}" config --get caliber.mcpUrl 2> /dev/null || true)"
 fi
-[ -n "${CALIBER_MCP_URL}" ] || stop "not started: this clone has no Caliber endpoint (run .caliber/hooks/pre-push --install, or /caliber:setup)."
+[ -n "${CALIBER_MCP_URL}" ] || stop "not started: this clone has no Caliber endpoint (run /caliber:setup)."
 # https (http on this machine) and no credentials, which the log never repeats.
 shown="$(printf '%s' "${CALIBER_MCP_URL}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#')"
 python3 -I - "${CALIBER_MCP_URL}" << 'PY' || stop "not started: the Caliber endpoint must be an https URL without credentials (${shown})."

@@ -125,8 +125,11 @@ Nothing is written without your answer.
 
 The check after a push runs only in a repository with the Caliber block or a `.caliber/` directory; the
 session's line names the project there and offers the setup elsewhere (above). The check after
-a push stays quiet when the repository's own `.claude/settings.json` already runs Caliber's hook; turn it off
-for one clone with `git config --local caliber.checkInSession false`.
+a push stays quiet when the repository's own `.claude/settings.json` still runs Caliber's hook from
+`.caliber/hooks/` (a setup from before hooks version 31); turn it off for one clone with
+`git config --local caliber.checkInSession false`. From hooks version 31 nothing of the hooks is in the
+repository: the git hook's scripts are in the clone's git directory (`<git common dir>/caliber/hooks/`), and
+at the start of a session the plugin replaces older copies there with its own.
 
 ## Another Caliber instance
 
