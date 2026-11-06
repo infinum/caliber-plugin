@@ -157,8 +157,8 @@ absent() {
     esac
   done
 }
-for name in prd brief tech-spec plan comments check fix open-pr audit code-audit security-audit status setup \
-    setup-usage describe-specs projects project; do
+for name in prd brief tech-spec plan write comments check fix open-pr audit code-audit security-audit status \
+    setup setup-usage describe-specs projects project; do
   file="$plugin/commands/$name.md"
   if [ ! -f "$file" ]; then
     fail "commands/$name.md is missing"
@@ -181,7 +181,7 @@ for name in prd brief tech-spec plan comments check fix open-pr audit code-audit
   [ -n "$missing$extra" ] || fail "commands/$name.md lists an allowed tool twice"
 done
 count=$(find "$plugin/commands" -name '*.md' | wc -l | tr -d ' ')
-[ "$count" -eq 17 ] || fail "expected 17 commands, found $count"
+[ "$count" -eq 18 ] || fail "expected 18 commands, found $count"
 
 [ "$failed" -eq 0 ] || exit 1
 echo "check-release: ok (plugin $version, hooks version $hooks_version)"
