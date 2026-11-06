@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the git hook. caliber-hooks-version: 31
+# Caliber check on push: the git hook. caliber-hooks-version: 32
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # git runs this before a push, after the hook that was there. It never blocks, delays or
@@ -612,7 +612,7 @@ plugin_on() {
 # in the last 7 days (a hook the agent does not run, a Codex hook nobody approved, a workspace
 # whose clone it cannot tell, never takes the check); the
 # plugin's hook, unless the repository's settings name an entry whose script is gone; or, until
-# v32, an entry of the repository whose script is there (one set up before v31).
+# v33, an entry of the repository whose script is there (one set up before v31).
 caliber_repo() { [ -d "$root/.caliber" ] || grep -qsF '<!-- caliber:start' "$root/CLAUDE.md" "$root/AGENTS.md"; }
 # person <agent> <the person's hook file>: the absolute path setup wrote into the entry.
 person() {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 31
+# Caliber check on push: the agent session hook. caliber-hooks-version: 32
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -7,32 +7,28 @@
 # a successful `git push`, or a pull request opened from the command line, it tells the
 # agent to run the Caliber check in this session. Anything else: no output.
 #
-# The person's entries (hooks v31) run it everywhere as  agent-post-push.sh <agent> user ,
-# the Claude Code plugin as  agent-post-push.sh claude plugin : each acts only with a Caliber
-# block or .caliber/ (or caliber.project, below), and not where the repository's own entry
-# runs a copy that is there. With the user marker it finds the clone from the hook's input
-# when it was not started in one (Cursor runs a user hook from ~/.cursor/), and marks a push it
-# placed in a clone (seen-<agent> in the clone's git directory: the git hook leaves a push to
-# it only then).
-# At a session start,  agent-post-push.sh claude plugin session  replaces older copies of the
-# scripts in the clone's git directory and the person's folder with the plugin's own, and
-# hands the agent one line:
-# the project, its source and the Caliber host. Without a project the line has the agent
-# offer the setup once, when a project lists the origin (shown without userinfo); never
-# with caliber.askSetup false, on a resume or a compaction. Beside the project line, the
-# plugin's version against the ones Caliber serves (/mcp/plugin/versions, read at most once a
-# day, kept in ~/.cache/caliber): below the minimum the agent uses no Caliber tool until the
-# person updates, below the recommended one it suggests the update, at most once a day.
+# The person's entries (v31) run it as  agent-post-push.sh <agent> user , the plugin as
+# agent-post-push.sh claude plugin : each acts only with a Caliber block or .caliber/ (or
+# caliber.project, below), not where the repository's own entry runs a copy that is there.
+# With `user` it finds the clone from the hook's input when not started in one (Cursor runs
+# a user hook from ~/.cursor/) and marks a push it placed there (seen-<agent>, for the git hook).
+# At a session start,  agent-post-push.sh claude plugin session  replaces older copies in the
+# clone's git directory and the person's folder with the plugin's own, and hands the agent one
+# line: the project, its source and the Caliber host. Without a project the agent offers the
+# setup once, when a project lists the origin (shown without userinfo); never with
+# caliber.askSetup false, on a resume or a compaction. Beside it, the plugin's version against
+# Caliber's (/mcp/plugin/versions, read at most once a day, kept in ~/.cache/caliber): below
+# the minimum no Caliber tool until the person updates; below the recommended one, a
+# suggestion at most once a day.
 # python3 runs with -I, so a module planted at the repository's root never runs.
 #
 # In a virtual repository's clone (caliber.syncActivity, a sync token) a session start
 # starts the activity sync and offers no setup; an agent's push starts it too, when the
 # clone's git hook does not.
 #
-# After a push it hands the agent the link step too: link the branch to the spec the session
-# built it from, when nothing links it yet (features-links). The link step alone, with no
-# check: in a clone with only caliber.project, with caliber.checkInSession false, and while
-# the git hook checks the push.
+# After a push it also hands the link step (features-links): link the branch to the spec the
+# session built it from, when nothing links it yet; that alone, no check, in a clone with only
+# caliber.project, with caliber.checkInSession false, and while the git hook checks the push.
 #
 #   git config --local caliber.checkInSession false    turn the check off for this clone
 
@@ -861,11 +857,11 @@ if not (elsewhere or unnamed) and elsewhere_branch is None \
 
 
 def checked_here(checked):
-    """Whether the git hook checks what this command pushed: `any` (a copy older than v31), else
-    the commits its record names; a push it cannot place (several refs) counts as checked."""
+    """Whether the git hook checks what this command pushed: the commits its record names; a
+    push it cannot place (several refs) counts as checked."""
     if not checked:
         return False
-    if checked == "any" or unnamed:
+    if unnamed:
         return True
     ref = (elsewhere_branch or "HEAD") + "^{commit}"
     try:
@@ -1007,16 +1003,19 @@ os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync --session \
         </dev/null >/dev/null 2>&1 &)
     fi
   fi
-  # Older copies of the scripts, in the clone's git directory and the person's folders (the
-  # folder an entry names, and the default one), become the plugin's own: never a newer one,
-  # a missing one or one without a version line.
+  # Older copies in the clone's git directory and the person's folders (an entry's, and the
+  # default) become the plugin's own: never a newer one, a missing one, one without a version
+  # line or one a repository tracks.
   mine=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || mine=""
   refresh() {
     [ -n "$mine" ] && [ -d "$1" ] || return 0
     there=$(cd "$1" 2>/dev/null && pwd -P) || return 0
     [ "$there" != "$mine" ] || return 0
+    tracked=$(git -C "$there" ls-files -- pre-push check-on-push.sh agent-post-push.sh sync.py \
+      stamp-invoker.py 2>/dev/null) || tracked=""
     for name in pre-push check-on-push.sh agent-post-push.sh sync.py stamp-invoker.py; do
       if [ ! -f "$there/$name" ] || [ ! -f "$mine/$name" ]; then continue; fi
+      if printf '%s\n' "$tracked" | grep -qxF "$name"; then continue; fi
       old=$(version "$there/$name")
       new=$(version "$mine/$name")
       if [ -z "$old" ] || [ -z "$new" ] || ! [ "$new" -gt "$old" ] 2>/dev/null; then continue; fi
@@ -1125,36 +1124,37 @@ if [ -n "${plain:-}" ]; then
 fi
 
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
-# Whether the git hook's check of this push is running: one check per push.
-running=""
+# Whether the git hook's check of this branch is running: one check per push.
+lock=""
 if [ -n "$branch" ]; then
   common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
   name=$(printf '%s' "$branch" | tr -c 'A-Za-z0-9._-' '_')
   if [ "$name" != "$branch" ]; then
     name="$name-$(printf '%s' "$branch" | git hash-object --stdin | cut -c1-8)"
   fi
-  lock="$common/caliber/check-$name.pid"
-  if [ -n "$common" ] && [ -f "$lock" ]; then
-    read -r pid lock_sha _ <"$lock" 2>/dev/null || pid=""
-    case "$pid" in '' | *[!0-9]*) pid="" ;; esac
-    # Only a run for this push: the lock is "<pid> <sha>".
-    [ "${lock_sha:-}" = "$(git rev-parse --verify --quiet HEAD 2>/dev/null)" ] || pid=""
-    # Alive and still the runner (a pid is reused).
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      if [ -r "/proc/$pid/cmdline" ]; then
-        tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'check-on-push\.sh' && running=1
-      else
-        ps -o command= -p "$pid" 2>/dev/null | grep -q 'check-on-push\.sh' && running=1
-      fi
-    fi
-  fi
+  [ -z "$common" ] || lock="$common/caliber/check-$name.pid"
 fi
+# runs [<sha>]: the lock ("<pid> <sha>") names a live runner (a pid is reused), of that commit.
+runs() {
+  [ -n "$lock" ] && [ -f "$lock" ] || return 1
+  read -r pid lock_sha _ <"$lock" 2>/dev/null || return 1
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  [ -z "${1:-}" ] || [ "${lock_sha:-}" = "$1" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  if [ -r "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'check-on-push\.sh'
+  else
+    ps -o command= -p "$pid" 2>/dev/null | grep -q 'check-on-push\.sh'
+  fi
+}
+running=""
+head=$(git rev-parse --verify --quiet HEAD 2>/dev/null) || head=""
+if [ -n "$head" ] && runs "$head"; then running=1; fi
 
-# Whether the clone's git hook checks this push itself (one check per push): its record of
-# the push (hooks v31; `background` within 10 minutes, with the commits it checks), or, without
-# a fresh one, for the person's entry, a git hook that runs a copy older than v31, which never
-# leaves a push to a person's entry (`any`). The program leaves the check out of a push of one
-# of those commits (the link step stays); a pull request opened is no push.
+# Whether the git hook checks this push itself (one check per push): its v31 record
+# (`background` within 10 minutes, with the commits it checks). An older hook keeps none and
+# may start no check: only its run counts (an earlier push's too, which the new one stops),
+# waited for a second unless the push's output says it started none.
 checked=""
 if [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" = true ]; then
   common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
@@ -1170,14 +1170,24 @@ if [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" =
   esac
   if [ -n "$when" ]; then
     [ "$decision" != background ] || checked=$shas
-  elif [ -n "$user" ]; then
+  elif [ -n "$user" ] && [ -z "$running" ]; then
+    legacy=""
     case "$(hook_runs)" in
       copy)
         copy=$(version "$common/caliber/hooks/pre-push")
-        [ -z "$copy" ] || [ "$copy" -ge 31 ] 2>/dev/null || checked=any
+        [ -z "$copy" ] || [ "$copy" -ge 31 ] 2>/dev/null || legacy=1
         ;;
-      tree) [ ! -x "$top/.caliber/hooks/pre-push" ] || checked=any ;;
+      tree) [ ! -x "$top/.caliber/hooks/pre-push" ] || legacy=1 ;;
     esac
+    if [ -n "$legacy" ] \
+        && ! printf '%s' "$input" | grep -qE 'Caliber: no (check started|background check)'; then
+      tries=0
+      until runs || [ "$tries" -ge 10 ]; do
+        sleep 0.1
+        tries=$((tries + 1))
+      done
+      if runs; then running=1; fi
+    fi
   fi
 fi
 
