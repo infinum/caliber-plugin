@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 32
+# Caliber check on push: the agent session hook. caliber-hooks-version: 33
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -41,10 +41,9 @@ fi
 
 # The hooks version a script carries (its second line).
 version() { sed -n '2{s/.*caliber-hooks-version: \([0-9][0-9]*\).*/\1/p;q;}' "$1" 2>/dev/null; }
-# What the clone's git hook runs for the check: `copy` (the git directory's, a hook installed
-# with hooks v17 or later), `tree` (the working tree's, one installed before) or nothing.
-# Read from the wrapper's number, never from a path in it: a version 6 or 7 wrapper names
-# the git directory's copy too.
+# What the clone's git hook runs: `copy` (the git directory's, v17 or later), `tree` (the
+# working tree's) or nothing, read from the wrapper's number (a v6 or v7 wrapper names the
+# git directory's copy too).
 hook_runs() {
   hooks=$(git rev-parse --git-path hooks 2>/dev/null) || return 0
   case "$hooks" in /*) ;; *) hooks="$(pwd -P)/$hooks" ;; esac
@@ -552,9 +551,8 @@ command = tool_input.get("command") if isinstance(tool_input, dict) else None
 if not isinstance(command, str):
     sys.exit(0)
 
-# The words of each simple command, as the shell reads them (one pass, at most 200 kB);
-# a word with an expansion is None. A command substitution is skipped whole, in double
-# quotes too, so its quotes and here-documents end nothing outside it.
+# The words of each simple command, as the shell reads them (one pass, at most 200 kB); a
+# word with an expansion is None. A command substitution, in double quotes too, is skipped whole.
 src, n = command[:200000], min(len(command), 200000)
 commands, words, word = [], [], []
 has_word = unknown = redirect = False
@@ -1003,16 +1001,19 @@ os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync --session \
         </dev/null >/dev/null 2>&1 &)
     fi
   fi
-  # Older copies in the clone's git directory and the person's folders (an entry's, and the
-  # default) become the plugin's own: never a newer one, a missing one, one without a version
-  # line or one a repository tracks.
+  # Older copies in the git directory and the person's folders become the plugin's own: never
+  # a newer one, a missing one, one without a version line, or one a work tree tracks (or
+  # whose index git cannot read).
   mine=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || mine=""
   refresh() {
     [ -n "$mine" ] && [ -d "$1" ] || return 0
     there=$(cd "$1" 2>/dev/null && pwd -P) || return 0
     [ "$there" != "$mine" ] || return 0
-    tracked=$(git -C "$there" ls-files -- pre-push check-on-push.sh agent-post-push.sh sync.py \
-      stamp-invoker.py 2>/dev/null) || tracked=""
+    tracked=""
+    if [ "$(git -C "$there" rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+      tracked=$(git -C "$there" ls-files -- pre-push check-on-push.sh agent-post-push.sh \
+        sync.py stamp-invoker.py 2>/dev/null) || return 0
+    fi
     for name in pre-push check-on-push.sh agent-post-push.sh sync.py stamp-invoker.py; do
       if [ ! -f "$there/$name" ] || [ ! -f "$mine/$name" ]; then continue; fi
       if printf '%s\n' "$tracked" | grep -qxF "$name"; then continue; fi
@@ -1151,10 +1152,9 @@ running=""
 head=$(git rev-parse --verify --quiet HEAD 2>/dev/null) || head=""
 if [ -n "$head" ] && runs "$head"; then running=1; fi
 
-# Whether the git hook checks this push itself (one check per push): its v31 record
-# (`background` within 10 minutes, with the commits it checks). An older hook keeps none and
-# may start no check: only its run counts (an earlier push's too, which the new one stops),
-# waited for a second unless the push's output says it started none.
+# Whether the git hook checks this push itself: its v31 record (`background` within 10
+# minutes, with the commits it checks); an older hook keeps none, so only its run of this
+# commit counts, waited for a second unless the push's output says it started none.
 checked=""
 if [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" = true ]; then
   common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P) || common=""
@@ -1179,14 +1179,14 @@ if [ "$(git config --local --type=bool --get caliber.checkOnPush 2>/dev/null)" =
         ;;
       tree) [ ! -x "$top/.caliber/hooks/pre-push" ] || legacy=1 ;;
     esac
-    if [ -n "$legacy" ] \
+    if [ -n "$legacy" ] && [ -n "$head" ] \
         && ! printf '%s' "$input" | grep -qE 'Caliber: no (check started|background check)'; then
       tries=0
-      until runs || [ "$tries" -ge 10 ]; do
+      until runs "$head" || [ "$tries" -ge 10 ]; do
         sleep 0.1
         tries=$((tries + 1))
       done
-      if runs; then running=1; fi
+      if runs "$head"; then running=1; fi
     fi
   fi
 fi
