@@ -109,6 +109,7 @@ Nothing is written without your answer.
 | `/caliber:brief <change>` | Write a technical brief |
 | `/caliber:tech-spec <prd-key>` | Design the approach and write the tech spec |
 | `/caliber:plan <spec-key>` | Write the implementation plan |
+| `/caliber:write <type> <what>` | Write a document of one of the project's types: its own (an ADR, a runbook…) or a built-in one (when the organization has document types on) |
 | `/caliber:comments <spec-key>` | Work through a spec's open comment threads (when collaboration is on) |
 | `/caliber:check [pr-number]` | Check the pull request with the project's audits |
 | `/caliber:fix [pr-number]` | Fix the open findings, one commit each |
