@@ -12,7 +12,9 @@ this repository names (between `<!-- caliber:start` and `<!-- caliber:end -->` i
 block that names no slug is an older one, which `/caliber:setup` updates). Without either, call `projects`:
 when it returns exactly one project, use it; otherwise ask me which project. When the rest starts with
 `parent=<key>`, pass that key as `parent` and leave it out of `about`. If Caliber's only tool here is
-`authenticate`, Caliber is not signed in yet: say so (run `/mcp` and sign in to caliber) and stop. If the
-tool `write` is missing, document types are off in this organization: say so and stop. When
+`authenticate`, Caliber is not signed in yet: say so (run `/mcp` and sign in to caliber) and stop. With no
+`mcp__plugin_caliber_caliber__` tool at all, the plugin's server is not loaded yet: tell me to run
+`/reload-plugins` (or start a new session) and stop. With other Caliber tools but no `write`, document types
+are off in this organization: say so and stop. When
 nothing follows the command, call `write` without `type`: it lists the types this project can start. Then
 follow the instructions the tool returns, in this session.
