@@ -1,5 +1,5 @@
 #!/bin/sh
-# Caliber check on push: the agent session hook. caliber-hooks-version: 33
+# Caliber check on push: the agent session hook. caliber-hooks-version: 34
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Run after each shell command an agent runs:  agent-post-push.sh <agent>
@@ -1003,17 +1003,16 @@ os.execv(sys.argv[1], sys.argv[1:])' "$syncer" --sync --session \
   fi
   # Older copies in the git directory and the person's folders become the plugin's own: never
   # a newer one, a missing one, one without a version line, or one a work tree tracks (or
-  # whose index git cannot read).
+  # whose index git cannot read), asked without the session's GIT_* variables.
   mine=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || mine=""
   refresh() {
     [ -n "$mine" ] && [ -d "$1" ] || return 0
     there=$(cd "$1" 2>/dev/null && pwd -P) || return 0
     [ "$there" != "$mine" ] || return 0
-    tracked=""
-    if [ "$(git -C "$there" rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
-      tracked=$(git -C "$there" ls-files -- pre-push check-on-push.sh agent-post-push.sh \
-        sync.py stamp-invoker.py 2>/dev/null) || return 0
-    fi
+    tracked=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+      [ "$(git -C "$there" rev-parse --is-inside-work-tree 2>/dev/null)" != true ] \
+        || git -C "$there" ls-files -- pre-push check-on-push.sh agent-post-push.sh sync.py \
+          stamp-invoker.py 2>/dev/null) || return 0
     for name in pre-push check-on-push.sh agent-post-push.sh sync.py stamp-invoker.py; do
       if [ ! -f "$there/$name" ] || [ ! -f "$mine/$name" ]; then continue; fi
       if printf '%s\n' "$tracked" | grep -qxF "$name"; then continue; fi
