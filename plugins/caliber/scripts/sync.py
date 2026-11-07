@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 28
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 33
 # Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
 # `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
 # domains'; one line per run in sync.log, nothing on the terminal.
@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 28
+VERSION = 33
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
