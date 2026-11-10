@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 34
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 35
 # Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
 # `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
 # domains'; one line per run in sync.log, nothing on the terminal.
@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 34
+VERSION = 35
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -517,6 +517,13 @@ def main():
             groups.append((group, None))
             lines_of[sha] = authored
         counts["commits"] = len(lines_of)
+        # Parents, merges too: ancestry that verifies a fix. No backfill: findings are recent.
+        for row in ("" if backfill else git("rev-list", "--parents", *rangeargs, "--",
+                                            timeout=1800) or "").splitlines():
+            sha, *up = row.split()
+            edges = [f"E\t{sha}\t{p}" for p in up if SHA.fullmatch(p)] if SHA.fullmatch(sha) else []
+            if edges:
+                groups.append((edges, None))
 
     # 6a, 6b. Branch fingerprints; PRs of the default branch.
     branch = asked.get("branch") or ""
