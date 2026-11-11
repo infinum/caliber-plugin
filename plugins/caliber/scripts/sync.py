@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 34
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 36
 # Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
 # `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
 # domains'; one line per run in sync.log, nothing on the terminal.
@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 34
+VERSION = 36
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -459,6 +459,8 @@ def main():
              if SHA.fullmatch(t) and t in commits_known]
     cut = [] if FULL or backfill else saved
     window_since = since if backfill or ((first or not saved) and not FULL) else ""
+    # Parents of a run that became the history at once: its first window's.
+    edge_since = window_since
     # An empty first window: the history at once.
     if window_since and not backfill and not there and history_since and tips:
         count = git("rev-list", "--count", "--no-merges", f"--since={window_since}", *tips,
@@ -467,11 +469,10 @@ def main():
             backfill, since = True, history_since
             window_since = since
             NOTES["note"] = "history-at-once"
-    rangeargs = list(tips)
-    if cut:
-        rangeargs += ["--not", *cut]
-    if window_since:
-        rangeargs.insert(0, f"--since={window_since}")
+    def range_of(start):
+        return ([f"--since={start}"] if start else []) + tips + (["--not", *cut] if cut else [])
+
+    rangeargs = range_of(window_since)
     partial = config(f"remote.{remote}.promisor") == "true" \
         or bool(config("extensions.partialclone"))
     shallow = set((read_shallow() or "").split())
@@ -517,6 +518,18 @@ def main():
             groups.append((group, None))
             lines_of[sha] = authored
         counts["commits"] = len(lines_of)
+        # Parents, merges too: ancestry that verifies a fix. Not in --backfill (findings are
+        # recent); a failed read sends nothing, so the tips stay for the next run.
+        parents = "" if BACKFILL else git("rev-list", "--parents", *range_of(edge_since), "--",
+                                          timeout=1800)
+        if parents is None:
+            log("history-failed", hello=200)
+            return
+        for row in parents.splitlines():
+            sha, *up = row.split()
+            edges = [f"E\t{sha}\t{p}" for p in up if SHA.fullmatch(p)] if SHA.fullmatch(sha) else []
+            if edges:
+                groups.append((edges, None))
 
     # 6a, 6b. Branch fingerprints; PRs of the default branch.
     branch = asked.get("branch") or ""

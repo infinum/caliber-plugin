@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Caliber check on push: the runner. caliber-hooks-version: 34
+# Caliber check on push: the runner. caliber-hooks-version: 36
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Started detached by the git hook (pre-push):  check-on-push.sh <branch> <sha> [remote]
