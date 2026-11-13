@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber invoker stamp. caliber-hooks-version: 36
+# Caliber invoker stamp. caliber-hooks-version: 38
 # A Claude Code PreToolUse hook on Caliber's submit_audit and verify_spec: it writes `invoker`
 # (who made the call, as the harness knows it) into the tool's input, replacing whatever the
 # agent put there (brief assure-independent-checks-stamp). Its matcher takes the two tool names
