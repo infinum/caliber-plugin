@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 36
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 37
 # Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
 # `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
 # domains'; one line per run in sync.log, nothing on the terminal.
@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 36
+VERSION = 37
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -518,8 +518,7 @@ def main():
             groups.append((group, None))
             lines_of[sha] = authored
         counts["commits"] = len(lines_of)
-        # Parents, merges too: ancestry that verifies a fix. Not in --backfill (findings are
-        # recent); a failed read sends nothing, so the tips stay for the next run.
+        # Parents (merges too) verify fixes; not in --backfill. A failed read sends nothing.
         parents = "" if BACKFILL else git("rev-list", "--parents", *range_of(edge_since), "--",
                                           timeout=1800)
         if parents is None:
@@ -540,9 +539,11 @@ def main():
         done = set(saved) if not FULL else set()
         if not partial and not shallow:
             groups += branch_groups(remote, branch, default_tip, PUSHED, done)
-        history = history_groups(default_tip, cut, window_since,
-                                 host, pr_path, kind, branch, text, partial or bool(shallow),
-                                 clear_email)
+        # v37: every branch's merges too, once over the window whatever the tips.
+        once = read("sync-merges") is None and history_since
+        history = history_groups([default_tip, f"--remotes={remote}"], [] if once else cut,
+                                 once or window_since, host, pr_path, kind, branch, text,
+                                 partial or bool(shallow), clear_email, default_tip)
         if history is None:
             log("history-failed", hello=200)
             return
@@ -632,6 +633,8 @@ def main():
         return
     # Only now: the next run's start.
     save("sync-tips", "".join(t + "\n" for t in tips))
+    if SHA.fullmatch(default_tip):
+        save("sync-merges", "37\n")
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
     if backfill:
@@ -731,17 +734,18 @@ def body_line(message):
 
 
 def named_pull_request(host, path, kind, parents, message):
-    """(number, title, head ref) of a PR in `kind`'s default message, else None."""
+    """(number, title, head ref, the base the message names or "") of a PR in `kind`'s
+    default message, else None."""
     first = message.split("\n", 1)[0]
     if kind == "github":
         found = re.match(r"Merge pull request #(\d{1,10}) from (\S+)", first)
         if found and len(parents) == 2:
             head = found.group(2)
             return found.group(1), body_line(message), head.split("/", 1)[1] if "/" in head \
-                else head
+                else head, ""
         found = re.search(r" \(#(\d{1,10})\)$", first)
         if found and len(parents) == 1:
-            return found.group(1), first[:found.start()], ""
+            return found.group(1), first[:found.start()], "", ""
     elif kind == "gitlab" and len(parents) in (1, 2):
         # The last `See merge request` line: `<path>!<n>`, or its URL on this host.
         footer = [*re.finditer(r"^See merge request\b(.*)$", message, re.M)][-1:]
@@ -749,25 +753,27 @@ def named_pull_request(host, path, kind, parents, message):
         found = footer and re.fullmatch(rf"(?:{url}|(\S+)!)(\d{{1,10}})",
                                         footer[0].group(1).strip())
         if found and (found.group(1) or found.group(2)).lower() == path.lower():
-            head = re.match(r"Merge branch '([^']+)' into ", first)
+            head = re.match(r"Merge branch '([^']+)' into (?:'([^']+)')?", first)
             # A merge's title is its second paragraph; a squash's, its subject.
             paragraphs = [p for p in re.split(r"\n[ \t]*\n", message.strip("\n")) if p.strip()]
             title = first.strip() if not head else (
                 paragraphs[1].split("\n", 1)[0].strip() if len(paragraphs) > 1 else "")
-            return found.group(3), title, head.group(1) if head else ""
+            return found.group(3), title, *((head.group(1), head.group(2) or "") if head
+                                            else ("", ""))
     elif kind == "bitbucket" and len(parents) in (1, 2):
         found = re.match(r"Merged in (\S+) \(pull request #(\d{1,10})\)", first)
         if found:
-            return found.group(2), body_line(message), found.group(1)
-        # Bitbucket Server: `Merge pull request #<n> in <P>/<R> from <b> to <t>` (< 7.0), or
-        # `Pull request #<n>: <title>` + `Merge in <P>/<R> from <b> to <t>`; a fork's: `~u/r:<b>`.
-        found = re.match(r"Merge pull request #(\d{1,10}) in (\S+) from (\S+) to \S+$", first)
+            return found.group(2), body_line(message), found.group(1), ""
+        # Bitbucket Server: `Merge pull request #n in P/R from b to t` (< 7.0), or
+        # `Pull request #n: title` + `Merge in P/R from b to t`; a fork's b: `~u/r:b`.
+        found = re.match(r"Merge pull request #(\d{1,10}) in (\S+) from (\S+) to (\S+)$", first)
         if found and found.group(2).lower() == path.lower():
-            return found.group(1), "", found.group(3).rsplit(":", 1)[-1]
+            return found.group(1), "", found.group(3).rsplit(":", 1)[-1], found.group(4)
         found = re.match(r"Pull request #(\d{1,10}): (.*)$", first)
-        merged = re.search(r"^Merge in (\S+) from (\S+) to \S+$", message, re.M)
+        merged = re.search(r"^Merge in (\S+) from (\S+) to (\S+)$", message, re.M)
         if found and merged and merged.group(1).lower() == path.lower():
-            return found.group(1), found.group(2).strip(), merged.group(2).rsplit(":", 1)[-1]
+            return (found.group(1), found.group(2).strip(), merged.group(2).rsplit(":", 1)[-1],
+                    merged.group(3))
     return None
 
 
@@ -781,19 +787,17 @@ def earliest(dates):
     return min(moments)[1] if moments else ""
 
 
-def history_groups(default_tip, saved, since, host, path, kind, branch, text, sizeless,
-                   clear_email):
-    """6b. `H`, `S`, `T` lines of first-parent commits naming a PR; None when unread."""
-    args = ["log", "--no-show-signature", "--first-parent",
-            "--format=%x1e%H%x00%P%x00%aI%x00%cI%x00%ae%x00%B"]
-    if since:
-        args.append(f"--since={since}")
-    args.append(default_tip)
-    if saved:
-        args += ["--not", *saved]
-    out = git(*args, "--", timeout=1800)
-    if out is None:
+def history_groups(tips, saved, since, host, path, kind, branch, text, sizeless, clear_email,
+                   default_tip):
+    """6b. PRs' `H`, `S`, `T` lines; None when unread."""
+    window = [f"--since={since}"] if since else []
+    out = git("log", "--no-show-signature", *window,
+              "--format=%x1e%H%x00%P%x00%aI%x00%cI%x00%ae%x00%B", *tips,
+              *(["--not", *saved] if saved else []), "--", timeout=1800)
+    trunk = git("rev-list", "--first-parent", *window, default_tip, "--")
+    if out is None or trunk is None:
         return None
+    trunk = set(trunk.split())
     groups, numbers = [], set()
     for record in out.split("\x1e")[1:]:
         fields = record.split("\0", 5)
@@ -801,13 +805,18 @@ def history_groups(default_tip, saved, since, host, path, kind, branch, text, si
             continue
         sha, parents, authored, committed, email, message = fields
         parents = parents.split()
-        if not SHA.fullmatch(sha) or not parents:
+        # Off the default branch a merge only (a squash may be a cherry-pick).
+        if not SHA.fullmatch(sha) or not parents or sha not in trunk and len(parents) != 2:
             continue
-        found = named_pull_request(host, path, kind, parents, message.rstrip("\n"))
+        message = message.rstrip("\n")
+        found = named_pull_request(host, path, kind, parents, message)
         if not found or int(found[0]) < 1 or str(int(found[0])) in numbers:
             continue  # newest first: a number's last merge
         number, title, head_ref = str(int(found[0])), found[1], found[2]
         numbers.add(number)
+        # As the provider's: the base the message names; else the default branch's own
+        # merges are into it, and another branch's base is unknown.
+        base = found[3] or (branch if sha in trunk else "")
         first_parent, merge, head, brought = parents[0], sha, "", []
         if len(parents) == 2:
             head = parents[1]
@@ -820,8 +829,8 @@ def history_groups(default_tip, saved, since, host, path, kind, branch, text, si
             if brought:  # else the merge's own author
                 email = (git("log", "--no-show-signature", "-1", "--format=%ae", head, "--")
                          or "").strip() or email
-            base = (git("merge-base", first_parent, head) or "").strip()
-            mark = fingerprint(base, head) if SHA.fullmatch(base) and not sizeless else ""
+            fork = (git("merge-base", first_parent, head) or "").strip()
+            mark = fingerprint(fork, head) if SHA.fullmatch(fork) and not sizeless else ""
             if kind == "gitlab":
                 # GitLab's squash: one commit, one parent.
                 rows = (git("rev-list", "--parents", f"{first_parent}..{head}", "--")
@@ -839,12 +848,12 @@ def history_groups(default_tip, saved, since, host, path, kind, branch, text, si
                 added = str(sum(int(r[0]) for r in rows if len(r) == 3 and r[0].isdigit()))
                 deleted = str(sum(int(r[1]) for r in rows if len(r) == 3 and r[1].isdigit()))
         email = email.strip(SPACE)
-        group = ["\t".join(("H", number, committed, authored, added, deleted, field(branch),
+        group = ["\t".join(("H", number, committed, authored, added, deleted, field(base),
                             head, merge, hashed("e", email), clear_email(email), mark))]
         group += [f"S\t{number}\t{s}" for s, _ in brought]
         if text:
             group.append("\t".join(("T", number, b64(title), "", field(head_ref),
-                                    field(branch))))
+                                    field(base))))
         groups.append((group, None))
     groups.reverse()  # oldest first
     return groups
