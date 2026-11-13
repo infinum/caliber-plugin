@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 37
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 38
 # Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
 # `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
 # domains'; one line per run in sync.log, nothing on the terminal.
@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 37
+VERSION = 38
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -633,8 +633,8 @@ def main():
         return
     # Only now: the next run's start.
     save("sync-tips", "".join(t + "\n" for t in tips))
-    if SHA.fullmatch(default_tip):
-        save("sync-merges", "37\n")
+    if SHA.fullmatch(default_tip) and not shallow:  # a shallow clone's older merges: later
+        save("sync-merges", "38\n")
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
     if backfill:
@@ -777,6 +777,12 @@ def named_pull_request(host, path, kind, parents, message):
     return None
 
 
+def own_head(path, message):
+    """A GitHub merge of a branch of this repository's owner."""
+    found = re.match(r"Merge pull request #\d{1,10} from ([^/\s]+)/", message)
+    return bool(found) and found.group(1).lower() == path.split("/", 1)[0].lower()
+
+
 def earliest(dates):
     moments = []
     for value in dates:
@@ -806,12 +812,15 @@ def history_groups(tips, saved, since, host, path, kind, branch, text, sizeless,
         sha, parents, authored, committed, email, message = fields
         parents = parents.split()
         # Off the default branch a merge only (a squash may be a cherry-pick).
-        if not SHA.fullmatch(sha) or not parents or sha not in trunk and len(parents) != 2:
+        if not SHA.fullmatch(sha) or not parents or (sha not in trunk and len(parents) != 2):
             continue
         message = message.rstrip("\n")
         found = named_pull_request(host, path, kind, parents, message)
         if not found or int(found[0]) < 1 or str(int(found[0])) in numbers:
             continue  # newest first: a number's last merge
+        # v38: and one naming this repository: a fork's merges come along with its history.
+        if sha not in trunk and not (kind == "gitlab" or found[3] or own_head(path, message)):
+            continue
         number, title, head_ref = str(int(found[0])), found[1], found[2]
         numbers.add(number)
         # As the provider's: the base the message names; else the default branch's own
