@@ -539,8 +539,8 @@ def main():
         done = set(saved) if not FULL else set()
         if not partial and not shallow:
             groups += branch_groups(remote, branch, default_tip, PUSHED, done)
-        # v37: every branch's merges too, once over the window whatever the tips.
-        once = read("sync-merges") is None and history_since
+        # v37: every branch's merges too, once over the window whatever the tips; --full: all.
+        once = not FULL and read("sync-merges") is None and history_since
         history = history_groups([default_tip, f"--remotes={remote}"], [] if once else cut,
                                  once or window_since, host, pr_path, kind, branch, text,
                                  partial or bool(shallow), clear_email, default_tip)
