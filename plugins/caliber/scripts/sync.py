@@ -540,7 +540,7 @@ def main():
         if not partial and not shallow:
             groups += branch_groups(remote, branch, default_tip, PUSHED, done)
         # v37: every branch's merges too, once over the window whatever the tips; --full: all.
-        once = not FULL and read("sync-merges") is None and history_since
+        once = not FULL and not shallow and read("sync-merges") is None and history_since
         history = history_groups([default_tip, f"--remotes={remote}"], [] if once else cut,
                                  once or window_since, host, pr_path, kind, branch, text,
                                  partial or bool(shallow), clear_email, default_tip)
@@ -633,7 +633,7 @@ def main():
         return
     # Only now: the next run's start.
     save("sync-tips", "".join(t + "\n" for t in tips))
-    if SHA.fullmatch(default_tip) and not shallow:  # a shallow clone's older merges: later
+    if SHA.fullmatch(default_tip) and not shallow:  # once whole, the window's merges
         save("sync-merges", "38\n")
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
@@ -777,12 +777,6 @@ def named_pull_request(host, path, kind, parents, message):
     return None
 
 
-def own_head(path, message):
-    """A GitHub merge of a branch of this repository's owner."""
-    found = re.match(r"Merge pull request #\d{1,10} from ([^/\s]+)/", message)
-    return bool(found) and found.group(1).lower() == path.split("/", 1)[0].lower()
-
-
 def earliest(dates):
     moments = []
     for value in dates:
@@ -818,8 +812,9 @@ def history_groups(tips, saved, since, host, path, kind, branch, text, sizeless,
         found = named_pull_request(host, path, kind, parents, message)
         if not found or int(found[0]) < 1 or str(int(found[0])) in numbers:
             continue  # newest first: a number's last merge
-        # v38: and one naming this repository: a fork's merges come along with its history.
-        if sha not in trunk and not (kind == "gitlab" or found[3] or own_head(path, message)):
+        # v38: and one whose message names this repository (GitLab's, Bitbucket Server's):
+        # another one's merges come along with its history (a fork's, a subtree's).
+        if sha not in trunk and not (kind == "gitlab" or found[3]):
             continue
         number, title, head_ref = str(int(found[0])), found[1], found[2]
         numbers.add(number)
