@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Caliber's activity sync of a virtual repository. caliber-hooks-version: 38
+# Caliber's activity sync of a virtual repository. caliber-hooks-version: 40
 # Written by /caliber:setup-usage; the next version replaces it whole. Run only by the
 # `pre-push --sync` beside it (python3 -I). Authors hashed but the developer's own and own
 # domains'; one line per run in sync.log, nothing on the terminal.
@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
-VERSION = 38
+VERSION = 40
 STATE = os.environ["CALIBER_SYNC_STATE"]
 TRIGGER = os.environ.get("CALIBER_SYNC_TRIGGER") or "manual"
 FULL = TRIGGER == "full"
@@ -33,7 +33,9 @@ PART_BYTES, MAX_REQUESTS, PAGE, PAGES, BACKFILL_PAGES = 900 * 1024, 500, 100, 5,
 MESSAGE_CHARS, HOUR, LOCK_AGE, WAIT = 4096, 3600, 2 * 3600, 120
 UPPER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 #: The clouds' kinds; else hello's `provider`.
-CLOUDS = {"github.com": "github", "gitlab.com": "gitlab", "bitbucket.org": "bitbucket"}
+CLOUDS = {"github.com": "github", "gitlab.com": "gitlab", "bitbucket.org": "bitbucket",
+          "dev.azure.com": "azure_devops", "ssh.dev.azure.com": "azure_devops",
+          "vs-ssh.visualstudio.com": "azure_devops"}
 SPACE = " \t\n\r\v\f"
 #: Git, gh and glab never prompt.
 QUIET = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS="",
@@ -168,7 +170,7 @@ def repository_of(url):
     host = host.lower()
     host = host[4:] if host.startswith("www.") else host
     key = f"{host}/{path}"
-    return key if re.fullmatch(r"[a-z0-9.-]+(?:/[A-Za-z0-9._-]+){2,}", key) else None
+    return key if re.fullmatch(r"[a-z0-9.-]+(?:/[A-Za-z0-9._%-]+){2,}", key) else None
 
 
 def unscm(key):
@@ -540,7 +542,11 @@ def main():
         if not partial and not shallow:
             groups += branch_groups(remote, branch, default_tip, PUSHED, done)
         # v37: every branch's merges too, once over the window whatever the tips; --full: all.
-        once = not FULL and not shallow and read("sync-merges") is None and history_since
+        # v40: an Azure DevOps clone's once more, for the merge message v39 didn't read.
+        marked = read("sync-merges")
+        merges = int(marked) if (marked or "").strip().isdigit() else 0
+        older = marked is None or kind == "azure_devops" and merges < 40
+        once = not FULL and not shallow and older and history_since  # the window's start
         history = history_groups([default_tip, f"--remotes={remote}"], [] if once else cut,
                                  once or window_since, host, pr_path, kind, branch, text,
                                  partial or bool(shallow), clear_email, default_tip)
@@ -634,7 +640,7 @@ def main():
     # Only now: the next run's start.
     save("sync-tips", "".join(t + "\n" for t in tips))
     if SHA.fullmatch(default_tip) and not shallow:  # once whole, the window's merges
-        save("sync-merges", "38\n")
+        save("sync-merges", "40\n")
     if tags_kept is not None:
         save("sync-tags", "".join(f"{name}\t{obj}\n" for name, obj in sorted(tags_kept.items())))
     if backfill:
@@ -774,6 +780,14 @@ def named_pull_request(host, path, kind, parents, message):
         if found and merged and merged.group(1).lower() == path.lower():
             return (found.group(1), found.group(2).strip(), merged.group(2).rsplit(":", 1)[-1],
                     merged.group(3))
+    elif kind == "azure_devops" and len(parents) in (1, 2):
+        found = re.match(r"Merged PR (\d{1,10}): (.*)$", first)
+        if found:
+            return found.group(1), found.group(2).strip(), "", ""
+        # Its other merge: `Merge pull request <n> from <b> into <t>`, no title.
+        found = re.match(r"Merge pull request (\d{1,10}) from (\S+) into (\S+)$", first)
+        if found and len(parents) == 2:
+            return found.group(1), "", found.group(2), found.group(3)
     return None
 
 
@@ -814,7 +828,7 @@ def history_groups(tips, saved, since, host, path, kind, branch, text, sizeless,
             continue  # newest first: a number's last merge
         # v38: and one whose message names this repository (GitLab's, Bitbucket Server's):
         # another one's merges come along with its history (a fork's, a subtree's).
-        if sha not in trunk and not (kind == "gitlab" or found[3]):
+        if sha not in trunk and not (kind == "gitlab" or kind == "bitbucket" and found[3]):
             continue
         number, title, head_ref = str(int(found[0])), found[1], found[2]
         numbers.add(number)
