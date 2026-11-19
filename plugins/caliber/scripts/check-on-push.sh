@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Caliber check on push: the runner. caliber-hooks-version: 40
+# Caliber check on push: the runner. caliber-hooks-version: 41
 # Written by /caliber:setup. Do not edit: the next version replaces the file whole.
 #
 # Started detached by the git hook (pre-push):  check-on-push.sh <branch> <sha> [remote]
@@ -412,7 +412,8 @@ def prompt(checkout):
         "--local caliber.project <slug>)`. ")
     print(first + "Call the Caliber tool `check` with " + ", ".join(arguments) + ", follow "
           "what it returns, and end with one line `CALIBER_STATUS: <status> <url>`: the "
-          "check's status as `get_check_status` reports it at the end, and its url.")
+          "check's `display.key` as `get_check_status` reports it at the end (its `status` "
+          "when it has no `display`), and its url.")
 
 
 def alive(pid):
@@ -520,8 +521,11 @@ def summary(path):
         return
     state, url = found[-1]
     state = state.strip()
-    words = {"passed": "Passed", "signed_off": "Passed and signed off", "blocked": "Blocked",
-             "pending": "Pending"}
+    # The statuses people read (brief assure-clarity), then a server's before them.
+    words = {"not_checked": "Not checked", "blocked": "Blocked",
+             "fixes_to_confirm": "Fixes to confirm", "needs_spec": "Needs a spec",
+             "needs_signoff": "Needs sign-off", "passed": "Passed",
+             "signed_off": "Passed and signed off", "pending": "Pending"}
     print(words.get(state.lower(), state))
     print(url)
 
@@ -945,7 +949,10 @@ if not state:
     sys.exit(0)
 words = {"passed": "Passed", "signed_off": "Passed and signed off", "blocked": "Blocked",
          "pending": "Pending"}
-line = words.get(state, str(state))
+shown = status.get("display") if isinstance(status.get("display"), dict) else {}
+line = str(shown.get("label") or "") or words.get(state, str(state))
+if state == "signed_off" and shown.get("label"):
+    line = "Passed and signed off"
 action = " ".join(str(status.get("next_action") or "").split())
 if action and not action.startswith("Passed"):
     line += " — " + action
